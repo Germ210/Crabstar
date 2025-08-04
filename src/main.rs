@@ -58,8 +58,6 @@ fn main() {
   let parser = parse_expr();
   let (ast, errs) = parser.parse(input).into_output_errors();
 
-  let final_ast = ast;
-
-  println!("Ast: {:#?}", final_ast);
+  println!("Ast: {:#?}", ast);
   println!("Errors: {:#?}", errs);
 }
