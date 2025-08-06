@@ -1,0 +1,2 @@
+chumsky::combinator::Map<Ignored<Repeated<chumsky::primitive::Any<&str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>, char, &str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>, ()>, (), {closure@src\parser.rs:168:48: 168:51}>
+ViaParser<chumsky::combinator::Map<Ignored<Repeated<chumsky::primitive::Any<&str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>, char, &str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>, ()>, (), {closure@src\parser.rs:168:48: 168:51}>>

@@ -1,0 +1,2 @@
+Then<Choice<(Just<&str, _, _>, Just<&str, _, _>, Just<&str, _, _>)>, Recursive<dyn chumsky::Parser<'_, _, (_, Ast), _>>, &str, (_, Ast), _>
+Then<Choice<(Just<&str, _, _>, Just<&str, _, _>, Just<&str, _, _>)>, Recursive<dyn chumsky::Parser<'_, _, (_, Ast), _>>, &str, (_, Ast), _>: chumsky::Parser<'_, &str, (&str, Ast), chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>

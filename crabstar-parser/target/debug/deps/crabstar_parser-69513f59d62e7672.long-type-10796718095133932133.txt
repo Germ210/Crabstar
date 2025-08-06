@@ -1,0 +1,1 @@
+Recursive<dyn chumsky::Parser<'_, _, (_, Ast), _>>: chumsky::Parser<'_, &str, Ast, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>

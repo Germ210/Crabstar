@@ -1,0 +1,11 @@
+C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\deps\libc-1dade2eb8294f4a5.d: C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\lib.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\macros.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\primitives.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\mod.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\msvc\mod.rs
+
+C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\deps\liblibc-1dade2eb8294f4a5.rlib: C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\lib.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\macros.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\primitives.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\mod.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\msvc\mod.rs
+
+C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\deps\liblibc-1dade2eb8294f4a5.rmeta: C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\lib.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\macros.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\primitives.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\mod.rs C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\msvc\mod.rs
+
+C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\lib.rs:
+C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\macros.rs:
+C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\primitives.rs:
+C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\mod.rs:
+C:\Users\Germ\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libc-0.2.174\src\windows\msvc\mod.rs:

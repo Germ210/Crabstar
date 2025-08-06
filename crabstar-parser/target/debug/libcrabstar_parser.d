@@ -1,0 +1,1 @@
+C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\libcrabstar_parser.rlib: C:\Users\Germ\documents\github\crabstar\crabstar-parser\src\ast.rs C:\Users\Germ\documents\github\crabstar\crabstar-parser\src\lib.rs C:\Users\Germ\documents\github\crabstar\crabstar-parser\src\parser.rs

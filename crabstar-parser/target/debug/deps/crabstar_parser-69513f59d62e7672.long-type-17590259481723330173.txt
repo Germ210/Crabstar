@@ -1,0 +1,2 @@
+To<chumsky::primitive::Empty<_, _>, (), ()>: chumsky::Parser<'_, &str, &str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>
+RecoverWith<Just<&str, &str, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>, ViaParser<To<chumsky::primitive::Empty<_, _>, (), ()>>>

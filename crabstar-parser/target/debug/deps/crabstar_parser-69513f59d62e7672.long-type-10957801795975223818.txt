@@ -1,0 +1,2 @@
+Collect<SeparatedBy<Recursive<dyn chumsky::Parser<'_, _, Ast, _>>, Just<&str, _, _>, Ast, &str, _, _>, Ast, _>
+Collect<SeparatedBy<Recursive<dyn chumsky::Parser<'_, _, Ast, _>>, Just<&str, _, _>, Ast, &str, _, _>, Ast, _>: chumsky::IterParser<'_, _, _, _>

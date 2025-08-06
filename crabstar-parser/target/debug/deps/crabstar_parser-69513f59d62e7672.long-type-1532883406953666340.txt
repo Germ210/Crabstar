@@ -1,0 +1,1 @@
+fn() -> impl chumsky::Parser<'_, _, <_ as SliceInput<'_>>::Slice, _> + Copy {chumsky::text::ascii::ident::<'_, _, _>}

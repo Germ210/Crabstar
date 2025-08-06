@@ -1,0 +1,1 @@
+Foldl<{closure@src\parser.rs:139:62: 139:76}, Recursive<dyn chumsky::Parser<'_, _, Ast, _>>, Collect<SeparatedBy<Recursive<dyn chumsky::Parser<'_, _, Ast, _>>, Just<&str, _, _>, Ast, &str, _, _>, Ast, _>, _, _>
