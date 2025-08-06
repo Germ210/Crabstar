@@ -6,7 +6,8 @@ use parser::*;
 
 
 fn main() {
-  let input = "let x :: (a, @, c): a || c";
+  let input = "let x :: (a, b, c): a + b / c,
+    let b => x + 12";
 
   let parser = parser();
   let (ast, errs) = parser.parse(input).into_output_errors();
