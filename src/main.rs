@@ -6,9 +6,7 @@ use parser::*;
 
 
 fn main() {
-  let input = "let x :: (a, b) (
-    5.3, 16
-  )";
+  let input = "let x :: (a, @, c): a || c";
 
   let parser = parser();
   let (ast, errs) = parser.parse(input).into_output_errors();
