@@ -208,10 +208,26 @@ fn if_expr_parser<'src>(
         .or_not()
     )
     .map(|(if_expr, else_expr)| {
-      if let (Ast::If { cond, then_expr, else_expr: None }, Some(else_block)) = (&if_expr, &else_expr) {
-        Ast::If { cond: cond.clone(), then_expr: then_expr.clone(), else_expr: Some(else_block.clone()) }
-      } else { if_expr }
+      match (if_expr, else_expr) {
+        (Ast::If { cond, then_expr, else_expr: None }, Some(new_else)) => 
+          Ast::If { cond, then_expr, else_expr: Some(new_else) },
+        (Ast::If { cond, then_expr, else_expr: Some(nested) }, Some(new_else)) => 
+          Ast::If { cond, then_expr, else_expr: Some(Box::new(set_innermost_else(*nested, new_else))) },
+        (if_expr, None) => if_expr,
+        _ => unreachable!()
+      }
     })
+}
+
+#[inline(always)]
+fn set_innermost_else(ast: Ast, new_else: Box<Ast>) -> Ast {
+  match ast {
+    Ast::If { cond, then_expr, else_expr: None } => 
+      Ast::If { cond, then_expr, else_expr: Some(new_else) },
+    Ast::If { cond, then_expr, else_expr: Some(nested) } => 
+      Ast::If { cond, then_expr, else_expr: Some(Box::new(set_innermost_else(*nested, new_else))) },
+    _ => unreachable!()
+  }
 }
 
 fn atom_parser<'src>(
