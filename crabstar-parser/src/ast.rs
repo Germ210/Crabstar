@@ -31,8 +31,23 @@ pub enum Ast {
     value: Box<Self>,
     next: Option<Box<Self>>
   },
+  // function calls
+  // foo(), bar(), baz()
   Call {
     callee: Box<Self>, 
     args: Vec<Self>
-  }
+  },
+  // conditional branching,
+  // if true: 
+  //   12 
+  // elif 12 + 11 < 25 (
+  //   car(), 
+  //   12 + truck()
+  //  ) else: 
+  //   16
+  If {
+    cond: Box<Self>,
+    then_expr: Box<Self>,
+    else_expr: Option<Box<Self>>,
+  },
 }

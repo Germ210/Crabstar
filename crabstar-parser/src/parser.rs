@@ -3,16 +3,7 @@ use crate::ast::Ast;
 
 pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<'src, char>>> {
   let let_parser = recursive(|let_parser| {
-    let body_expr = choice((
-      just(":")
-        .ignore_then(expr_parser(let_parser.clone())),
-      expr_parser(let_parser.clone())
-        .separated_by(just(","))
-        .allow_trailing()
-        .collect()
-        .delimited_by(just("("), just(")"))
-        .map(Ast::Block)
-    ));
+    let body_expr = block_expr_parser(let_parser.clone());
 
     let param_parser = ident()
       .map(|ident: &str| Ast::Ident(ident.to_string()))
@@ -89,6 +80,21 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<
     .padded()
 }
 
+fn block_expr_parser<'src>(
+  let_parser: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  choice((
+    just(":")
+      .ignore_then(expr_parser(let_parser.clone())),
+    expr_parser(let_parser)
+      .separated_by(just(","))
+      .allow_trailing()
+      .collect()
+      .delimited_by(just("("), just(")"))
+      .map(Ast::Block)
+  ))
+}
+
 fn binary<'a, P, Q>(
   lhs: P,
   op_rhs: Q,
@@ -102,106 +108,187 @@ where
   })
 }
 
-pub fn expr_parser<'src>(
-  let_parser: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+fn bool_literal_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  choice((
+    just("true").to(Ast::Bool(true)),
+    just("false").to(Ast::Bool(false)),
+  ))
+    .labelled("true/false")
+    .as_context()
+}
+
+fn number_literal_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  let float_lit = digits(10)
+    .then(just("."))
+    .then(digits(10))
+    .to_slice()
+    .map(|s: &str| Ast::Float(s.parse().unwrap_or(0.0)));
+
+  let int_lit = digits(10)
+    .to_slice()
+    .map(|s: &str| Ast::Int(s.parse::<u64>().unwrap_or(0)));
+
+  choice((float_lit, int_lit))
+    .labelled("number")
+    .as_context()
+}
+
+fn identifier_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  ident()
+    .map(|name: &str| Ast::Ident(name.to_string()))
+    .labelled("identifier")
+    .as_context()
+}
+
+fn grouped_expr_parser<'src>(
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
 ) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
-  recursive(|expr| {
-    let bool_lit = choice((
-      just("true").to(Ast::Bool(true)),
-      just("false").to(Ast::Bool(false)),
+  expr
+    .separated_by(just(",").padded())
+    .allow_trailing()
+    .collect::<Vec<_>>()
+    .delimited_by(just("(").padded(), just(")").padded())
+    .map(|exprs| {
+      if exprs.len() == 1 {
+        exprs.into_iter().next().unwrap()
+      } else {
+        Ast::Block(exprs)
+      }
+    })
+    .recover_with(via_parser(
+      nested_delimiters('(', ')', [('[', ']')], |_| Ast::Dummy)
     ))
-      .labelled("true/false")
-      .as_context();
+    .labelled("parenthesized expression")
+    .as_context()
+}
 
-    let float_lit = digits(10)
-      .then(just("."))
-      .then(digits(10))
-      .to_slice()
-      .map(|s: &str| Ast::Float(s.parse().unwrap_or(0.0)));
-
-    let int_lit = digits(10)
-      .to_slice()
-      .map(|s: &str| Ast::Int(s.parse::<u64>().unwrap_or(0)));
-
-    let number_lit = choice((float_lit, int_lit))
-      .labelled("number")
-      .as_context();
-
-    let ident_expr = ident()
-      .map(|name: &str| Ast::Ident(name.to_string()))
-      .labelled("identifier")
-      .as_context();
-
-    let grouped_expr = expr
-      .clone()
-      .separated_by(just(",").padded())
-      .allow_trailing()
-      .collect::<Vec<_>>()
-      .delimited_by(just("(").padded(), just(")").padded())
-      .map(|exprs| {
-        if exprs.len() == 1 {
-          exprs.into_iter().next().unwrap()
-        } else {
-          Ast::Block(exprs)
-        }
-      })
-      .recover_with(via_parser(
-        nested_delimiters('(', ')', [('[', ']')], |_| Ast::Dummy)
-      ))
-      .labelled("parenthesized expression")
-      .as_context();
-
-    let atom = choice((
-      let_parser,
-      bool_lit,
-      number_lit,
-      ident_expr,
-      grouped_expr,
-    ))
+fn if_expr_parser<'src>(
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  let block_expr = choice((
+    just(":")
+    .ignore_then(expr.clone()),
+    expr.clone()
+    .separated_by(just(","))
+    .allow_trailing()
+    .collect()
+    .delimited_by(just("("), just(")"))
+    .map(Ast::Block)
+  ));
+  keyword("if")
+    .padded()
+    .ignore_then(expr.clone())
+    .then(block_expr.clone()) 
+    .padded()
+    .map(|(cond, then_expr)| Ast::If {
+      cond: Box::new(cond),
+      then_expr: Box::new(then_expr),
+      else_expr: None
+    })
+    .foldl(
+      keyword("elif")
       .padded()
-      .recover_with(via_parser(
-        none_of("),")
-          .repeated()
-          .ignored()
-          .map(|_| Ast::Dummy)
-      ));
+      .ignore_then(expr.clone())
+      .then(block_expr.clone())
+      .repeated(), 
+      |if_expr, (elif_cond, elif_expr)| {
+        if let Ast::If { cond, then_expr, .. } = if_expr { 
+          Ast::If {
+            cond, 
+            then_expr, 
+            else_expr: Some(Box::new(Ast::If { cond: Box::new(elif_cond), then_expr: Box::new(elif_expr), else_expr: None }))
+          }
+        } else { unreachable!() }
+      }
+    )
+    .then(
+      keyword("else")
+        .padded()
+        .ignore_then(block_expr.map(|expr| Box::new(expr)))
+        .or_not()
+    )
+    .map(|(if_expr, else_expr)| {
+      if let (Ast::If { cond, then_expr, else_expr: None }, Some(else_block)) = (&if_expr, &else_expr) {
+        Ast::If { cond: cond.clone(), then_expr: then_expr.clone(), else_expr: Some(else_block.clone()) }
+      } else { if_expr }
+    })
+}
 
-    let call = atom
+fn atom_parser<'src>(
+  let_parser: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src,
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  choice((
+    if_expr_parser(expr.clone()),
+    let_parser,
+    bool_literal_parser(),
+    number_literal_parser(),
+    identifier_parser(),
+    grouped_expr_parser(expr),
+  ))
+    .padded()
+    .recover_with(via_parser(
+      none_of("),")
+        .repeated()
+        .ignored()
+        .map(|_| Ast::Dummy)
+    )
+  )
+}
+
+fn call_parser<'src>(
+  atom: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src,
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  choice((
+    atom
       .clone()
       .then(just("(").padded().then(just(")").padded()).ignored())
       .map(|(callee, _)| Ast::Call {
         callee: Box::new(callee), args: vec![]
-      })
-      .or(atom.foldl(
-          expr
-          .clone()
-          .separated_by(just(","))
-          .collect()
-          .delimited_by(just("("), just(")"))
-          .repeated(),
-          |callee, args| Ast::Call { 
-            callee: Box::new(callee), 
-            args
-          }
-      ))
-      ;
+      }),
+    atom.foldl(
+      expr
+        .separated_by(just(","))
+        .collect()
+        .delimited_by(just("("), just(")"))
+        .repeated(),
+      |callee, args| Ast::Call { 
+        callee: Box::new(callee), 
+        args
+      }
+    )
+  ))
+}
 
-    let prefix = recursive(|prefix| {
-      choice((
-        keyword("not")
-          .padded()
-          .then(prefix.clone())
-          .map(|(_, rhs)| Ast::Unary("not".into(), Box::new(rhs)))
-          .labelled("not")
-          .as_context(),
-        just("-")
-          .padded()
-          .then(prefix.clone())
-          .map(|(_, rhs)| Ast::Unary("-".into(), Box::new(rhs)))
-          .labelled("-"),
-        call.clone(),
-      ))
-    });
+fn prefix_parser<'src>(
+  call: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  recursive(|prefix| {
+    choice((
+      keyword("not")
+        .padded()
+        .then(prefix.clone())
+        .map(|(_, rhs)| Ast::Unary("not".into(), Box::new(rhs)))
+        .labelled("not")
+        .as_context(),
+      just("-")
+        .padded()
+        .then(prefix.clone())
+        .map(|(_, rhs)| Ast::Unary("-".into(), Box::new(rhs)))
+        .labelled("-"),
+      call,
+    ))
+  })
+}
+
+pub fn expr_parser<'src>(
+  let_parser: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  recursive(|expr| {
+    let atom = atom_parser(let_parser, expr.clone());
+    let call = call_parser(atom, expr.clone());
+    let prefix = prefix_parser(call);
 
     let product = binary(
       prefix.clone(),
@@ -239,4 +326,3 @@ pub fn expr_parser<'src>(
     any().repeated().ignored().map(|_| Ast::Dummy)
   ))
 }
-

@@ -2,8 +2,7 @@ use crabstar_parser::{parser::parser, Parser};
 
 fn main() {
   let input = "
-    let x: 12 
-    let b => false(1, 2)
+    let x: if true: 12 elif false: 66 else: 16
   ";
 
   let parser = parser();

@@ -1,0 +1,1 @@
+impl chumsky::Parser<'_, _, <_ as SliceInput<'_>>::Slice, _> + Clone + '_: chumsky::IterParser<'_, &'src str, _, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>>
