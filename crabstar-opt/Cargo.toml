@@ -1,0 +1,8 @@
+[package]
+name = "crabstar-opt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crabstar-frontend = {path = "../crabstar-frontend/"}
+generational-arena = "0.2.9"

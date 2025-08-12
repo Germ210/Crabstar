@@ -1,0 +1,1 @@
+cargo:rustc-env=CHUMSKY_REPO_URL=https://github.com/zesterer/chumsky/blob/0.10.1

@@ -1,0 +1,4 @@
+impl chumsky::Parser<'_, &'src str, <&'src str as SliceInput<'_>>::Slice, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>> + Copy
+impl chumsky::Parser<'_, &'src str, <&'src str as SliceInput<'_>>::Slice, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>> + Copy: chumsky::Parser<'_, &'src str, Ast, chumsky::extra::Full<chumsky::error::Rich<'src, char>, (), ()>>
+IgnoreThen<impl chumsky::Parser<'_, &'src str, <&'src str as SliceInput<'_>>::Slice, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>> + Clone + '_, impl chumsky::Parser<'_, &'src str, <&'src str as SliceInput<'_>>::Slice, chumsky::extra::Full<chumsky::error::Rich<'_, char>, (), ()>> + Copy, &'src str, chumsky::extra::Full<chumsky::error::Rich<'src, char>, (), ()>>
+IgnoreThen<impl chumsky::Parser<'_, _, <_ as SliceInput<'_>>::Slice, _> + Clone + '_, impl chumsky::Parser<'_, _, <_ as SliceInput<'_>>::Slice, _> + Copy, _, _>
