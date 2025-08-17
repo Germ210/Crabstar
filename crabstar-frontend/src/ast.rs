@@ -3,51 +3,29 @@ use crate::typechecker::Type;
 
 #[derive(Debug, Clone, Default)]
 pub enum AstKind {
-  // For when an input is invalid, but still needs an ast node
   #[default]
   Dummy,
-  // Probably wondering why an integer is using an unsized integer
-  // This is because a parsd integer cannot be negative, so it would be more beneficial to handle a larger range and leave it for type checking
   Int(u64),
-  // 64 bit floats
   Float(f64),
-  // Boolean
   Bool(bool),
-  // Identifier, or a symbol, e.g foo, bar, baz
+  String(String),
   Ident(String),
-  // Operator with a single operand, e.g -x, not true
   Unary(String, Box<Ast>),
-  // Operator with two operands, e.g 5 + 3, 6 or 7, 12 and 16
   Binary(String, Box<Ast>, Box<Ast>),
-  // A list of ast nodes
   Block(Vec<Ast>),
-  // Defining a named variable/function, e.g
-  // let x: 12 + 7 in: x + 11
-  // let fn :: (a, b) (
-  //   a - b * 3
-  // )
-  // lazy evaluation, aka a function with no args 
-  // let lazy => 12
   Let {
     name: String,
+    mutable: bool,
+    recursive: bool,
     args: Option<Vec<Ast>>,
+    ret_type: Option<Box<Ast>>,
     value: Box<Ast>,
     next: Option<Box<Ast>>
   },
-  // function calls
-  // foo(), bar(), baz()
   Call {
     callee: Box<Ast>, 
     args: Vec<Ast>
   },
-  // conditional branching,
-  // if true: 
-  //   12 
-  // elif 12 + 11 < 25 (
-  //   car(), 
-  //   12 + truck()
-  //  ) else: 
-  //   16
   If {
     cond: Box<Ast>,
     then_expr: Box<Ast>,
@@ -57,6 +35,40 @@ pub enum AstKind {
     class: String,
     expr: Box<Ast>
   },
+  Match {
+    scrutinee: Box<Ast>,
+    branches: Vec<Ast>,
+    else_expr: Option<Box<Ast>>,
+  },
+  MatchBranch {
+    match_guard: Option<Box<Ast>>,
+    expr: Box<Ast>,
+    body: Box<Ast>,
+  },
+  Array(Vec<Ast>),
+  Index {
+    array: Box<Ast>,
+    index: Box<Ast>
+  },
+  FieldAccess {
+    object: Box<Ast>,
+    field: String
+  },
+  Assign {
+    target: Box<Ast>,
+    value: Box<Ast>
+  },
+  MethodCall {
+    object: Box<Ast>,
+    method: String,
+    args: Vec<Ast>
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchBranch {
+  pub match_guard: Option<Box<Ast>>,
+  pub expr: Box<Ast>,
 }
 
 #[derive(Debug, Clone)]

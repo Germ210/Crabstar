@@ -18,6 +18,6 @@ pub enum InstrEdit {
 }
 
 pub trait OptPass {
-  fn run(&mut self, ir: &IrModule) -> Vec<InstrEdit>;
+  fn run(&mut self, ir_mod: & IrModule) -> Vec<InstrEdit>;
 }
 

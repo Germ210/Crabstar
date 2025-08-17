@@ -32,13 +32,17 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<
       .labelled("function parameter")
       .as_context();
 
+    let type_parser = ident()
+      .map_with(|type_name: &str, e| make_ast(e.span(), AstKind::Ident(type_name.to_string())));
+
     just("let")
-      .ignore_then(ident().padded().recover_with(via_parser(
+      .ignore_then(keyword("mut").padded().or_not())
+      .then(keyword("rec").padded().or_not())
+      .then(ident().padded().recover_with(via_parser(
         none_of(" \t\n:=()")
           .repeated()
           .at_least(1)
           .to_slice()
-          .map(|s: &str| if s.is_empty() { "error_name" } else { s })
       )))
       .then(choice((
         just("::")
@@ -53,8 +57,16 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<
                 none_of(")")
                   .repeated()
                   .ignored()
-                  .map_with(|_, e| vec![make_ast(e.span(), AstKind::Ident("error_params".to_string()))])
+                  .map_with(|_, e| vec![make_ast(e.span(), AstKind::Dummy)])
               ))
+          )
+          .then(
+            just("=>")
+              .padded()
+              .ignore_then(type_parser)
+              .or_not()
+              .labelled("Return type")
+              .as_context()
           )
           .then(body_expr.clone().recover_with(via_parser(
             any()
@@ -62,7 +74,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<
               .ignored()
               .map_with(|_, e| make_ast(e.span(), AstKind::Dummy))
           )))
-          .map(|(args, value)| (Some(args), value)),
+          .map(|((args, ret_type), value)| (Some(args), ret_type, value)),
         just("=>")
           .padded()
           .ignore_then(expr_parser(let_parser.clone()).recover_with(via_parser(
@@ -71,18 +83,24 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Vec<Ast>, extra::Err<Rich<
               .ignored()
               .map_with(|_, e| make_ast(e.span(), AstKind::Dummy))
           )))
-          .map(|expr| (Some(vec![]), expr)),
+          .map(|expr| (Some(vec![]), None, expr)),
         body_expr.clone().recover_with(via_parser(
           any()
             .repeated()
             .ignored()
             .map_with(|_, e| make_ast(e.span(), AstKind::Dummy))
-        )).map(|expr| (None, expr))
+        )).map(|expr| (None, None, expr))
       )))
-      .map_with(|(name, (args, value)), e| make_ast(e.span(), AstKind::Let {
+      .map_with(|(((mutable_kw, rec_kw), name), (args, ret_type, value)), e| make_ast(e.span(), AstKind::Let {
         name: name.to_string(),
+        mutable: mutable_kw.is_some(),
+        recursive: rec_kw.is_some(),
         args,
         value: Box::new(value),
+        ret_type: match ret_type {
+          Some(ret_type) => Some(Box::new(ret_type)),
+          None => None
+        },
         next: None
       }))
       .padded()
@@ -149,10 +167,35 @@ fn number_literal_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err
     .as_context()
 }
 
+fn string_literal_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  just('"')
+    .ignore_then(none_of('"').repeated().to_slice())
+    .then_ignore(just('"'))
+    .map_with(|s: &str, e| make_typed_ast(e.span(), AstKind::String(s.to_string()), Type::Unknown))
+    .labelled("string literal")
+    .as_context()
+}
+
 fn identifier_parser<'src>() -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
   ident()
     .map_with(|name: &str, e| make_ast(e.span(), AstKind::Ident(name.to_string())))
     .labelled("identifier")
+    .as_context()
+}
+
+fn array_literal_parser<'src>(
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  expr
+    .separated_by(just(",").padded())
+    .allow_trailing()
+    .collect::<Vec<_>>()
+    .delimited_by(just("[").padded(), just("]").padded())
+    .map_with(|exprs, e| make_typed_ast(e.span(), AstKind::Array(exprs), Type::Array(Box::new(Type::Unknown))))
+    .recover_with(via_parser(
+      nested_delimiters('[', ']', [('(', ')')], |span| make_ast(span, AstKind::Dummy))
+    ))
+    .labelled("array literal")
     .as_context()
 }
 
@@ -165,10 +208,11 @@ fn heap_alloc_parser<'src>(
     .padded()
     .then(expr.delimited_by(just("("), just(")")))
     .map_with(|(class, expr), e| {
-      make_ast(e.span(), AstKind::HeapAlloc {
+      make_typed_ast(e.span(), AstKind::HeapAlloc {
         class: class.to_string(),
         expr: Box::new(expr)
-      })
+      },
+      Type::Heap(Box::new(Type::Unknown)))
     })
 }
 
@@ -199,80 +243,123 @@ fn if_expr_parser<'src>(
 ) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
   let block_expr = choice((
     just(":")
-      .padded()
-      .ignore_then(expr.clone()),
+    .padded()
+    .ignore_then(expr.clone()),
     expr.clone()
-      .separated_by(just(","))
-      .allow_trailing()
-      .collect()
-      .padded()
-      .delimited_by(just("("), just(")"))
-      .map_with(|exprs, e| make_ast(e.span(), AstKind::Block(exprs)))
-      .padded()
+    .separated_by(just(","))
+    .allow_trailing()
+    .collect()
+    .padded()
+    .delimited_by(just("("), just(")"))
+    .map_with(|exprs, e| make_ast(e.span(), AstKind::Block(exprs)))
+    .padded()
   ));
-  
+
   keyword("if")
     .padded()
     .ignore_then(expr.clone())
-    .then(block_expr.clone()) 
+    .then(block_expr.clone())
     .padded()
-    .map_with(|(cond, then_expr), e| make_ast(e.span(), AstKind::If {
-      cond: Box::new(cond),
-      then_expr: Box::new(then_expr),
-      else_expr: None
-    }))
-    .foldl(
-      keyword("elif")
+    .then(
+      keyword("else")
       .padded()
-      .ignore_then(expr.clone())
-      .then(block_expr.clone())
-      .repeated(), 
-      |if_expr, (elif_cond, elif_expr)| {
-        let (span, typed_ast) = if_expr;
-        if let AstKind::If { cond, then_expr, .. } = typed_ast.node { 
-          make_ast(span, AstKind::If {
-            cond, 
-            then_expr, 
-            else_expr: Some(Box::new(make_ast(span, AstKind::If { 
-              cond: Box::new(elif_cond), 
-              then_expr: Box::new(elif_expr), 
-              else_expr: None 
-            })))
-          })
-        } else { 
-          unreachable!() 
-        }
-      }
+      .ignore_then(block_expr.map_with(|expr, e| (e.span(), Box::new(expr))))
+      .or_not()
+    )
+    .map_with(|((cond, then_expr), else_expr), e| {
+      make_ast(
+        e.span(),
+        AstKind::If {
+          cond: Box::new(cond),
+          then_expr: Box::new(then_expr),
+          else_expr: else_expr.map(|(_, else_box)| else_box),
+        },
+      )
+    })
+}
+
+fn match_expr_parser<'src>(
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  keyword("match")
+    .padded()
+    .ignore_then(expr.clone())
+    .then(
+      match_branch(expr.clone())
+        .separated_by(just(",").padded())
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just("(").padded(), just(")").padded())
+        .recover_with(via_parser(
+          nested_delimiters('(', ')', [('[', ']')], |span| vec![make_ast(span, AstKind::Dummy)])
+        ))
     )
     .then(
       keyword("else")
         .padded()
-        .ignore_then(block_expr.map_with(|expr, e| (e.span(), Box::new(expr))))
+        .ignore_then(choice((
+          just(":")
+            .padded()
+            .ignore_then(expr.clone()),
+          expr.clone()
+            .separated_by(just(","))
+            .allow_trailing()
+            .collect()
+            .padded()
+            .delimited_by(just("("), just(")"))
+            .map_with(|exprs, e| make_ast(e.span(), AstKind::Block(exprs)))
+            .padded()
+        )))
         .or_not()
     )
-    .map(|(if_expr, else_expr)| {
-      let (span, typed_ast) = if_expr;
-      match (typed_ast.node, else_expr) {
-        (AstKind::If { cond, then_expr, else_expr: None }, Some((_, new_else))) => 
-          make_ast(span, AstKind::If { cond, then_expr, else_expr: Some(new_else) }),
-        (AstKind::If { cond, then_expr, else_expr: Some(nested) }, Some((_, new_else))) => 
-          make_ast(span, AstKind::If { cond, then_expr, else_expr: Some(Box::new(set_innermost_else(*nested, new_else))) }),
-        (if_node, None) => make_ast(span, if_node),
-        _ => unreachable!()
-      }
+    .map_with(|((scrutinee, branches), else_expr), e| {
+      make_ast(e.span(), AstKind::Match {
+        scrutinee: Box::new(scrutinee),
+        branches,
+        else_expr: else_expr.map(Box::new),
+      })
     })
+    .labelled("match expression")
+    .as_context()
 }
 
-#[inline(always)]
-fn set_innermost_else(ast: Ast, new_else: Box<Ast>) -> Ast {
-  let (span, typed_ast) = ast;
-  match typed_ast.node {
-    AstKind::If { cond, then_expr, else_expr: None } => 
-      make_ast(span, AstKind::If { cond, then_expr, else_expr: Some(new_else) }),
-    AstKind::If { cond, then_expr, else_expr: Some(nested) } => 
-      make_ast(span, AstKind::If { cond, then_expr, else_expr: Some(Box::new(set_innermost_else(*nested, new_else))) }),
-    _ => unreachable!()
-  }
+fn match_branch<'src>(
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  keyword("of")
+    .padded()
+    .ignore_then(expr.clone())
+    .then(
+      choice((
+        expr.clone()
+          .separated_by(just(",").padded())
+          .allow_trailing()
+          .collect()
+          .delimited_by(just("(").padded(), just(")").padded())
+          .map_with(|exprs, e| make_ast(e.span(), AstKind::Block(exprs)))
+          .recover_with(via_parser(
+            nested_delimiters('(', ')', [('[', ']')], |span| make_ast(span, AstKind::Dummy))
+          )),
+        just(":")
+          .padded()
+          .ignore_then(expr.clone())
+          .recover_with(via_parser(
+            none_of(",)")
+              .repeated()
+              .ignored()
+              .map_with(|_, e| make_ast(e.span(), AstKind::Dummy))
+          ))
+      ))
+    )
+    .map_with(|(pattern, body), e| {
+      make_ast(e.span(), AstKind::MatchBranch {
+        match_guard: None,
+        expr: Box::new(pattern),
+        body: Box::new(body),
+      })
+    })
+    .labelled("match branch")
+    .as_context()
 }
 
 fn atom_parser<'src>(
@@ -281,10 +368,13 @@ fn atom_parser<'src>(
 ) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
   choice((
     if_expr_parser(expr.clone()),
+    match_expr_parser(expr.clone()),
+    array_literal_parser(expr.clone()),
     heap_alloc_parser(expr.clone()),
     let_parser,
     bool_literal_parser(),
     number_literal_parser(),
+    string_literal_parser(),
     identifier_parser(),
     grouped_expr_parser(expr),
   ))
@@ -306,7 +396,6 @@ fn call_parser<'src>(
       .clone()
       .then(just("(").padded().then(just(")").padded()).ignored())
       .map_with(|(callee, _), e| {
-        // Function calls have unknown types until type checking  
         make_ast(e.span(), AstKind::Call {
           callee: Box::new(callee), args: vec![]
         })
@@ -318,7 +407,6 @@ fn call_parser<'src>(
         .delimited_by(just("("), just(")"))
         .repeated(),
       |callee, args, e| {
-        // Function calls have unknown types until type checking
         make_ast(e.span(), AstKind::Call { 
           callee: Box::new(callee), 
           args
@@ -328,8 +416,23 @@ fn call_parser<'src>(
   ))
 }
 
+fn index_access_parser<'src>(
+  field_access: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src,
+  expr: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  field_access.foldl_with(
+    expr.delimited_by(just("["), just("]")).repeated(),
+    |array, index, e| {
+      make_ast(e.span(), AstKind::Index {
+        array: Box::new(array),
+        index: Box::new(index)
+      })
+    }
+  )
+}
+
 fn prefix_parser<'src>(
-  call: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+  index_access: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
 ) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
   recursive(|prefix| {
     choice((
@@ -344,9 +447,25 @@ fn prefix_parser<'src>(
         .then(prefix.clone())
         .map_with(|(_, rhs), e| make_ast(e.span(), AstKind::Unary("-".into(), Box::new(rhs))))
         .labelled("-"),
-      call,
+      index_access,
     ))
   })
+}
+
+fn assign_parser<'src>(
+  or: impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone + 'src
+) -> impl Parser<'src, &'src str, Ast, extra::Err<Rich<'src, char>>> + Clone {
+  or.clone()
+    .then(just("=").padded().ignore_then(or).or_not())
+    .map_with(|(target, value), e| {
+      match value {
+        Some(val) => make_ast(e.span(), AstKind::Assign {
+          target: Box::new(target),
+          value: Box::new(val)
+        }),
+        None => target
+      }
+    })
 }
 
 pub fn expr_parser<'src>(
@@ -355,7 +474,8 @@ pub fn expr_parser<'src>(
   recursive(|expr| {
     let atom = atom_parser(let_parser, expr.clone());
     let call = call_parser(atom, expr.clone());
-    let prefix = prefix_parser(call);
+    let index_access = index_access_parser(call, expr.clone());
+    let prefix = prefix_parser(index_access);
 
     let product = binary(
       prefix.clone(),
@@ -387,7 +507,7 @@ pub fn expr_parser<'src>(
       keyword("or").then(and.clone()),
     );
 
-    or
+    assign_parser(or)
   })
   .recover_with(via_parser(
     any().repeated().ignored().map_with(|_, e| make_ast(e.span(), AstKind::Dummy))

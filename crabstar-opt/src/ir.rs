@@ -36,8 +36,8 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Instr {
-  ty: Type,
-  expr: Box<Expr>
+  pub ty: Type,
+  pub expr: Box<Expr>
 }
 
 impl Instr {

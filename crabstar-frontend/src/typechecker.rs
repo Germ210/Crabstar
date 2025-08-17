@@ -5,6 +5,7 @@ pub enum Type {
   Int,
   Float,
   Bool,
+  String,
   Function {
     params: Vec<Self>,
     ret_type: Box<Self>
@@ -12,7 +13,8 @@ pub enum Type {
   Unknown,
   Union(Vec<Self>),
   Null,
-  Heap(Box<Self>)
+  Heap(Box<Self>),
+  Array(Box<Self>)
 }
 
 pub struct TypeChecker {
@@ -20,10 +22,5 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-  // returns if type checking succeded
-  // if not, then it's up the caller to decide what to do
-  pub fn type_check(&mut self) -> bool {
-    
-    true
-  }
+ 
 }
