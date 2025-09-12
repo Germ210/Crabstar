@@ -1,5 +1,5 @@
 use std::{collections::HashMap, vec};
-use crabstar_frontend::typechecker::Type;
+use crabstar_frontend::types::Type;
 use crate::{ir::{Expr, Instr, IrModule, Temp}, pass::{InstrEdit, OptPass}};
 
 #[derive(Debug)]

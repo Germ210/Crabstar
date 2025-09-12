@@ -1,6 +1,6 @@
 cargo:rustc-check-cfg=cfg(switchable_stack,asm,link_asm)
 OPT_LEVEL = Some(0)
-OUT_DIR = Some(C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\build\psm-322cb1b326c344eb\out)
+OUT_DIR = Some(C:\Users\Germ\Documents\GitHub\crabstar\crabstar-frontend\target\debug\build\psm-322cb1b326c344eb\out)
 TARGET = Some(x86_64-pc-windows-msvc)
 cargo:rerun-if-env-changed=VCINSTALLDIR
 VCINSTALLDIR = None
@@ -14,7 +14,7 @@ cargo:rerun-if-env-changed=WindowsSDKVersion
 WindowsSDKVersion = None
 cargo:rerun-if-env-changed=LIB
 LIB = None
-PATH = Some(C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\deps;C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug;C:\Users\Germ\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\dotnet\;C:\Program Files\Git\cmd;C:\Users\Germ\Downloads\bin;C:\Program Files\CMake\bin;;C:\Users\Germ\.wasmer\globals\wapm_packages\.bin;C:\Program Files\nodejs\;C:\Program Files (x86)\Wasmer\bin;C:\Program Files (x86)\Wasmer\globals\wapm_packages\.bin;C:\Program Files\Neovim\bin;C:\ProgramData\chocolatey\bin;C:\Program Files\LLVM\bin;C:\Program Files (x86)\LLVM\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Users\Germ\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\Germ\AppData\Local\Programs\Python\Python312\;C:\Users\Germ\AppData\Local\GitHubDesktop\bin;C:\Users\Germ\AppData\Local\Microsoft\WindowsApps;C:\ninja;C:\Users\Germ\Downloads\godot4;C:\Users\Germ\.cargo\bin;C:\Users\Germ\AppData\Roaming\npm;C:\Program Files (x86)\Nmap;C:\wasi\bin;C:\Users\Germ\AppData\Local\Microsoft\WindowsApps;C:\Users\Germ\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\bin)
+PATH = Some(C:\Users\Germ\Documents\GitHub\crabstar\crabstar-frontend\target\debug\deps;C:\Users\Germ\Documents\GitHub\crabstar\crabstar-frontend\target\debug;C:\Users\Germ\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\dotnet\;C:\Program Files\Git\cmd;C:\Users\Germ\Downloads\bin;C:\Program Files\CMake\bin;;C:\Users\Germ\.wasmer\globals\wapm_packages\.bin;C:\Program Files\nodejs\;C:\Program Files (x86)\Wasmer\bin;C:\Program Files (x86)\Wasmer\globals\wapm_packages\.bin;C:\Program Files\Neovim\bin;C:\ProgramData\chocolatey\bin;C:\Program Files\LLVM\bin;C:\Program Files (x86)\LLVM\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Users\Germ\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\Germ\AppData\Local\Programs\Python\Python312\;C:\Users\Germ\AppData\Local\GitHubDesktop\bin;C:\Users\Germ\AppData\Local\Microsoft\WindowsApps;C:\ninja;C:\Users\Germ\Downloads\godot4;C:\Users\Germ\.cargo\bin;C:\Users\Germ\AppData\Roaming\npm;C:\Program Files (x86)\Nmap;C:\wasi\bin;C:\Users\Germ\AppData\Local\Microsoft\WindowsApps;C:\Users\Germ\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\bin)
 cargo:rerun-if-env-changed=INCLUDE
 INCLUDE = None
 HOST = Some(x86_64-pc-windows-msvc)
@@ -61,4 +61,4 @@ cargo:rerun-if-env-changed=ARFLAGS_x86_64-pc-windows-msvc
 ARFLAGS_x86_64-pc-windows-msvc = None
 cargo:rustc-link-search=native=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.43.34808\atlmfc\lib\x64
 cargo:rustc-link-lib=static=psm_s
-cargo:rustc-link-search=native=C:\Users\Germ\documents\github\crabstar\crabstar-parser\target\debug\build\psm-322cb1b326c344eb\out
+cargo:rustc-link-search=native=C:\Users\Germ\Documents\GitHub\crabstar\crabstar-frontend\target\debug\build\psm-322cb1b326c344eb\out

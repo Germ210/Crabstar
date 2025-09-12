@@ -1,4 +1,4 @@
-use crabstar_frontend::typechecker::Type;
+use crabstar_frontend::types::Type;
 use std::collections::HashMap;
 use generational_arena::Arena;
 use crate::pass::{InstrEdit, OptPass};

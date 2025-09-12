@@ -1,5 +1,5 @@
 use chumsky::prelude::SimpleSpan;
-use crate::typechecker::Type;
+use crate::types::{Constraint, Type};
 
 #[derive(Debug, Clone, Default)]
 pub enum AstKind {
@@ -20,7 +20,16 @@ pub enum AstKind {
     args: Option<Vec<Ast>>,
     ret_type: Option<Box<Ast>>,
     value: Box<Ast>,
-    next: Option<Box<Ast>>
+    next: Option<Box<Ast>>,
+    constraints: Vec<Constraint>
+  },
+  Const {
+    name: String,
+    recursive: bool,
+    args: Option<Vec<Ast>>,
+    ret_type: Option<Box<Ast>>,
+    value: Box<Ast>,
+    constraints: Vec<Constraint>
   },
   Call {
     callee: Box<Ast>, 
@@ -66,15 +75,67 @@ pub enum AstKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct MatchBranch {
-  pub match_guard: Option<Box<Ast>>,
-  pub expr: Box<Ast>,
-}
-
-#[derive(Debug, Clone)]
 pub struct TypedAst {
   pub ty: Type,
   pub node: AstKind,
 }
 
 pub type Ast = (SimpleSpan, TypedAst);
+
+pub fn traverse_ast<F: FnMut(&mut Ast)>(ast: &mut Ast, f: &mut F)  {
+  f(ast);
+
+  match &mut ast.1.node {
+    AstKind::Unary(_, expr) => traverse_ast(expr, f),
+    AstKind::Binary(_, left, right) => {
+      traverse_ast(left, f);
+      traverse_ast(right, f);
+    },
+    AstKind::Block(exprs) | AstKind::Array(exprs) => {
+      for expr in exprs { traverse_ast(expr, f); }
+    },
+    AstKind::Let { value, next, args, ret_type, .. } => {
+      traverse_ast(value, f);
+      if let Some(next) = next { traverse_ast(next, f) }
+      if let Some(ret_type) = ret_type { traverse_ast(ret_type, f) }
+      if let Some(args) = args {
+        for arg in args { traverse_ast(arg, f) }
+      }
+    },
+    AstKind::Const { value, args, ret_type, .. } => {
+        traverse_ast(value, f);
+        if let Some(ret_type) = ret_type { traverse_ast(ret_type, f) }
+        if let Some(args) = args {
+          for arg in args { traverse_ast(arg, f) }
+        }
+    }
+    AstKind::Call { callee, args } => {
+      traverse_ast(callee, f);
+      for arg in args { traverse_ast(arg, f) }
+    },
+    AstKind::If { cond, then_expr, else_expr } => {
+      traverse_ast(cond, f);
+      traverse_ast(then_expr, f);
+      if let Some(else_expr) = else_expr { traverse_ast(else_expr, f) }
+    },
+    AstKind::HeapAlloc { expr, .. } => traverse_ast(expr, f),
+    AstKind::Match { scrutinee, branches, else_expr } => {
+      traverse_ast(scrutinee, f);
+      for branch in branches { traverse_ast(branch, f); }
+      if let Some(else_expr) = else_expr { traverse_ast(else_expr, f) }
+    },
+    AstKind::MatchBranch { match_guard, expr, body } => {
+      if let Some(guard) = match_guard { traverse_ast(guard, f) }
+      traverse_ast(expr, f);
+      traverse_ast(body, f);
+    },
+    AstKind::Index { array, index } => {
+      traverse_ast(array, f);
+      traverse_ast(index, f);
+    },
+    AstKind::FieldAccess { object, .. } | AstKind::Assign { target: object, value: _ } | AstKind::MethodCall { object, args: _ , .. } => {
+      traverse_ast(object, f);
+    },
+    AstKind::Int(_) | AstKind::Float(_) | AstKind::Bool(_) | AstKind::String(_) | AstKind::Ident(_) | AstKind::Dummy => {}
+  }
+}

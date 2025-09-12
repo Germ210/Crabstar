@@ -1,26 +1,12 @@
-use crate::ast::Ast;
+use std::collections::HashMap;
 
-#[derive(Debug,Clone)]
-pub enum Type {
-  Int,
-  Float,
-  Bool,
-  String,
-  Function {
-    params: Vec<Self>,
-    ret_type: Box<Self>
-  },
-  Unknown,
-  Union(Vec<Self>),
-  Null,
-  Heap(Box<Self>),
-  Array(Box<Self>)
+use crate::types::Type;
+
+pub struct TypeEnv {
+  params: HashMap<String, Type>,
+  locals: HashMap<String, Type>,
 }
 
-pub struct TypeChecker {
-  ast: Vec<Ast>,
-}
-
-impl TypeChecker {
- 
+pub struct ConstraintBuilder {
+  env: TypeEnv
 }
