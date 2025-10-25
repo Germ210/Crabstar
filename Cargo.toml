@@ -3,5 +3,4 @@ resolver = "3"
 members = [
   "crabstarc",
   "crabstar-frontend",
-  "crabstar-opt"
 ]

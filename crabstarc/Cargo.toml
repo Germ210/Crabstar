@@ -5,4 +5,3 @@ edition = "2021"
 
 [dependencies]
 crabstar-frontend = { path = "../crabstar-frontend/" }
-crabstar-opt = { path = "../crabstar-opt/" }

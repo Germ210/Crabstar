@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chumsky = "0.10.1"
+cargo = "0.91.0"
+polytype = "7.0.1"
+rowan = "0.16.1"
+untwine = "0.9.4"
