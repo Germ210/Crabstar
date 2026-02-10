@@ -1,7 +1,26 @@
-use crabstar_frontend::parser::{parser, Parser};
+use crabstar_frontend::{
+  ast::Root,
+  parser::{parser, Parser},
+};
 
 fn main() {
-  let src =
-    "let add: fn(x, y): x + y in let multiply: fn(a, b): a * b in multiply(add(1, 2), add(3, 4)) let b: 12";
-  println!("{:#?}", parser().parse(src).into_output_errors());
+  let test_script =
+    r#"concept Adder requires {x = int} with {def add(self: int, n: int) -> int: self.x + n}"#;
+  let (ast, err) = parser().parse(test_script).into_output_errors();
+
+  if !err.is_empty() {
+    println!("Errors:");
+    for e in err {
+      println!("{:?}", e);
+    }
+  }
+
+  if let Some(ast) = ast {
+    let root = Root::cast(ast).unwrap();
+    println!("AST:");
+    for (i, node) in root.children().enumerate() {
+      println!("\nNode {}:", i);
+      println!("{:#?}", node);
+    }
+  }
 }

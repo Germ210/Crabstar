@@ -1,0 +1,115 @@
+#[derive(Debug, Copy, Clone, PartialEq, Hash, Ord, PartialOrd, Eq)]
+#[repr(u16)]
+pub enum SyntaxKind {
+  Root = 0,
+  Whitespace,
+  Comment,
+  Int,
+  Float,
+  String,
+  Ident,
+  LParen,
+  RParen,
+  Invalid,
+  Plus,
+  Minus,
+  Star,
+  Slash,
+  Comma,
+  Eq,
+  NotEq,
+  Lt,
+  Gt,
+  LtEq,
+  GtEq,
+  Colon,
+  Dot,
+  Pipe,
+  FieldAccess,
+  MethodCall,
+  KwNew,
+  KwConcept,
+  KwRequires,
+  StructDef,
+  StructField,
+  NewExpr,
+  BehaviorDef,
+  RequiresClause,
+  WithClause,
+  MethodDef,
+  Arrow,
+  KwFn,
+  KwDo,
+  KwDef,
+  KwThen,
+  KwIn,
+  KwOf,
+  KwMatch,
+  KwElse,
+  KwAnd,
+  KwOr,
+  KwNot,
+  KwTrue,
+  KwFalse,
+  KwLet,
+  KwRef,
+  KwMut,
+  KwWith,
+  KwWhen,
+  KwType,
+  KwStruct,
+  KwEnum,
+  BinaryExpr,
+  PrefixExpr,
+  ParenExpr,
+  LBrace,
+  MatchTarget,
+  RBrace,
+  MatchExpr,
+  MatchBranch,
+  WhenClause,
+  ElseClause,
+  CallExpr,
+  FieldExpr,
+  StructExpr,
+  ConstructorExpr,
+  IfExpr,
+  InExpr,
+  FnExpr,
+  LetExpr,
+  RefBindingExpr,
+  RefType,
+  ParamList,
+  ArgList,
+  Literal,
+  Punctuation,
+  TypeDecl,
+  TypeConstructor,
+  TypeExpr,
+  TypeParam,
+  TypeApp,
+}
+
+impl From<SyntaxKind> for rowan::SyntaxKind {
+  fn from(value: SyntaxKind) -> Self {
+    unsafe { rowan::SyntaxKind(std::mem::transmute(value)) }
+  }
+}
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+pub enum CrabstarLang {}
+
+impl rowan::Language for CrabstarLang {
+  type Kind = SyntaxKind;
+
+  fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
+    unsafe { std::mem::transmute(raw.0 as u16) }
+  }
+
+  fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
+    unsafe { rowan::SyntaxKind(std::mem::transmute(kind)) }
+  }
+}
+
+pub type SyntaxNode = rowan::SyntaxNode<CrabstarLang>;
+pub type SyntaxToken = rowan::SyntaxToken<CrabstarLang>;
