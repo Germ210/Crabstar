@@ -217,6 +217,18 @@ fn bool<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>
     })
 }
 
+fn null<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  whitespace().then(keyword("null")).map(|(ws, _)| {
+    GreenNode::new(
+      SyntaxKind::Literal.into(),
+      vec![
+        NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), &ws)),
+        NodeOrToken::Token(GreenToken::new(SyntaxKind::KwNull.into(), "null")),
+      ],
+    )
+  })
+}
+
 fn ident<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
   whitespace()
     .then(text::ident::<&'src str, extra::Err<Rich<'src, char>>>())
@@ -1693,6 +1705,7 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, c
   let float = float();
   let string = string();
   let boot = bool();
+  let null = null();
   let ident = ident();
 
   let expr = recursive(|expr| {
@@ -1707,6 +1720,7 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, c
       match_expr,
       func,
       new_expr,
+      null,
       ident.clone(),
     ));
 

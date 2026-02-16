@@ -1,31 +1,4 @@
 use crate::ast::*;
-use crate::syntax::SyntaxNode;
-use std::collections::HashMap;
-
-#[derive(Debug, Clone)]
-pub struct TypeTable {
-  types: HashMap<SyntaxNode, Type>,
-}
-
-impl TypeTable {
-  pub fn new() -> Self {
-    Self {
-      types: HashMap::new(),
-    }
-  }
-
-  pub fn insert(&mut self, node: SyntaxNode, ty: Type) {
-    self.types.insert(node, ty);
-  }
-
-  pub fn get(&self, node: &SyntaxNode) -> Option<&Type> {
-    self.types.get(node)
-  }
-
-  pub fn get_mut(&mut self, node: &SyntaxNode) -> Option<&mut Type> {
-    self.types.get_mut(node)
-  }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -58,6 +31,12 @@ pub enum Type {
   Generic,
   Var(String),
   Error,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FuncType {
+  pub params: Vec<Type>,
+  pub return_type: Type,
 }
 
 impl Type {

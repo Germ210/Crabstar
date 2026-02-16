@@ -43,6 +43,7 @@ pub enum SyntaxKind {
   KwDo,
   KwDef,
   KwThen,
+  KwNull,
   KwIn,
   KwOf,
   KwMatch,

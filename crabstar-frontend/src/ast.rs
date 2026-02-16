@@ -357,7 +357,7 @@ make_ast!(NewExpr {
   rparen
 });
 
-make_ast!(InExpr { in_keyword, inner });
+make_ast!(InExpr { in_keyword, expr });
 
 make_ast!(ElseClause {
   else_keyword,
