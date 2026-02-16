@@ -223,6 +223,7 @@ impl TypeChecker {
           }
 
           self.call_stack.push((callee_key, func_type));
+          self.in_generic_context = true;
           self.push_scope();
 
           let param_list_binding = func_expr.param_list();
@@ -239,6 +240,7 @@ impl TypeChecker {
           }
 
           let return_ty = self.check(func_expr.body().as_node().unwrap());
+          self.in_generic_context = false;
           self.pop_scope();
           self.call_stack.pop();
           return return_ty;
