@@ -3,7 +3,7 @@ use crabstar_frontend::parser::{parser, Parser};
 use crabstar_frontend::typechecker::TypeChecker;
 
 fn main() {
-  let test_script = r#"let x: 5 + 3 in x"#;
+  let test_script = r#"let x: fn(): fn(a, b): a + b in x()(1, 2)"#;
   let (ast, err) = parser().parse(test_script).into_output_errors();
   if let Some(root_node) = ast {
     dbg!(&root_node);

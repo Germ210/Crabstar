@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::syntax::SyntaxNode;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -19,6 +20,7 @@ pub enum Type {
   Fn {
     params: Vec<Type>,
     return_type: Box<Type>,
+    source_node: Option<SyntaxNode>,
   },
   Struct {
     name: String,
