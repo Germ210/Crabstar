@@ -933,7 +933,7 @@ fn when_clause<'src>(
       opt.unwrap_or_else(|| {
         (
           GreenNode::new(SyntaxKind::Punctuation.into(), vec![]),
-          GreenNode::new(SyntaxKind::Root.into(), vec![]),
+          GreenNode::new(SyntaxKind::Punctuation.into(), vec![]),
         )
       })
     })

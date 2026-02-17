@@ -4,9 +4,21 @@ use crabstar_frontend::typechecker::TypeChecker;
 
 fn main() {
   let test_script = r#"
-    let x: fn(): fn(a, b): a + b in x()(1, 2)
-    let y: fn(): fn(a, b): a + b in x()("Hello, ", "World!")
+    let fib: fn(n): match n {
+      of 0: 0
+      of 1: 1
+    } else: fib(n - 1) + fib(n - 2)
+    in fib(10)
+
+    let compose: fn(f, g, x): f(g(x)) in
+    compose(
+      fn(y): y + 1,
+      fn(z): z * 2,
+      10
+    )
+
   "#;
+
   let (ast, err) = parser().parse(test_script).into_output_errors();
   if let Some(root_node) = ast {
     dbg!(&root_node);
@@ -15,6 +27,7 @@ fn main() {
     let mut checker = TypeChecker::new();
 
     for child in root.let_exprs() {
+      dbg!(&child);
       let ty = checker.check(child.syntax());
       println!("Type: {:?}", ty);
     }

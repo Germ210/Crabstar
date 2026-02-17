@@ -1,7 +1,7 @@
 use crate::{
   ast::{
-    ArgList, AstNode, BinaryExpr, CallExpr, FnExpr, Ident, InExpr, LetExpr, Literal, MethodCall,
-    ParamList,
+    ArgList, AstNode, BinaryExpr, CallExpr, ElseClause, FnExpr, Ident, InExpr, LetExpr, Literal,
+    MatchBranch, MatchBranches, MatchExpr, MethodCall, ParamList, PrefixExpr, WhenClause,
   },
   syntax::{SyntaxKind, SyntaxNode},
   types::{FuncType, Type},
@@ -11,9 +11,9 @@ use std::collections::HashMap;
 pub struct TypeChecker {
   env: Vec<HashMap<String, SyntaxNode>>,
   call_stack: Vec<(String, FuncType)>,
-  checked_nodes: HashMap<SyntaxNode, Type>,
+  checked_nodes: HashMap<(SyntaxNode, Vec<Type>), Type>,
   in_generic_context: bool,
-  function_defs: HashMap<SyntaxNode, SyntaxNode>,
+  current_args: Vec<Type>,
 }
 
 impl TypeChecker {
@@ -23,8 +23,12 @@ impl TypeChecker {
       call_stack: Vec::new(),
       checked_nodes: HashMap::new(),
       in_generic_context: false,
-      function_defs: HashMap::new(),
+      current_args: Vec::new(),
     }
+  }
+
+  pub fn into_types(self) -> HashMap<(SyntaxNode, Vec<Type>), Type> {
+    self.checked_nodes
   }
 
   fn push_scope(&mut self) {
@@ -50,7 +54,8 @@ impl TypeChecker {
 
   pub fn check(&mut self, node: &SyntaxNode) -> Type {
     if !self.in_generic_context {
-      if let Some(cached) = self.checked_nodes.get(node) {
+      let key = (node.clone(), self.current_args.clone());
+      if let Some(cached) = self.checked_nodes.get(&key) {
         return cached.clone();
       }
     }
@@ -63,6 +68,9 @@ impl TypeChecker {
       Some(AstNode::CallExpr(node)) => self.check_call_expr(&node),
       Some(AstNode::MethodCall(node)) => self.check_method_call(&node),
       Some(AstNode::BinaryExpr(node)) => self.check_binary_expr(&node),
+      Some(AstNode::ParenExpr(node)) => self.check(node.inner().as_node().unwrap()),
+      Some(AstNode::PrefixExpr(node)) => self.check_prefix_expr(&node),
+      Some(AstNode::MatchExpr(node)) => self.check_match_expr(&node),
       Some(AstNode::Param(_)) => Type::Generic,
       _ => todo!(
         "Finish implementing type checking for type: {:?}",
@@ -71,7 +79,8 @@ impl TypeChecker {
     };
 
     if !self.in_generic_context {
-      self.checked_nodes.insert(node.clone(), ty.clone());
+      let key = (node.clone(), self.current_args.clone());
+      self.checked_nodes.insert(key, ty.clone());
     }
 
     ty
@@ -155,17 +164,11 @@ impl TypeChecker {
     self.pop_scope();
     self.in_generic_context = was_generic;
 
-    let ty = Type::Fn {
+    Type::Fn {
       params: param_types,
       return_type: Box::new(body_ty),
       source_node: Some(node.syntax().clone()),
-    };
-
-    self
-      .function_defs
-      .insert(node.syntax().clone(), node.syntax().clone());
-
-    ty
+    }
   }
 
   fn check_call_expr(&mut self, node: &CallExpr) -> Type {
@@ -174,7 +177,6 @@ impl TypeChecker {
     let args_binding = node.args();
     let args_node = args_binding.as_node().unwrap();
     let args_list = ArgList::cast(args_node.clone()).unwrap();
-
     let mut arg_types = Vec::new();
     let mut arg_nodes = Vec::new();
 
@@ -183,6 +185,61 @@ impl TypeChecker {
       let arg_expr = arg_expr_binding.as_node().unwrap();
       arg_types.push(self.check(arg_expr));
       arg_nodes.push(arg_expr.clone());
+    }
+
+    let func_node_opt = if let Some(AstNode::Ident(ident)) = AstNode::cast(callee.clone()) {
+      let name = ident.name();
+      let name = name.as_token().unwrap().text();
+      self.lookup_var(name).cloned()
+    } else {
+      None
+    };
+
+    if let Some(func_node) = func_node_opt.clone() {
+      let start = func_node.text_range().start();
+      let callee_key = format!("{:?}@{:?}", start, arg_types);
+
+      if let Some((_, existing)) = self.call_stack.iter().find(|(name, _)| name == &callee_key) {
+        if existing.params != arg_types {
+          panic!("Infinite monomorphization!");
+        }
+        return existing.return_type.clone();
+      }
+
+      if let Some(AstNode::FnExpr(func_expr)) = AstNode::cast(func_node.clone()) {
+        let func_type = FuncType {
+          params: arg_types.clone(),
+          return_type: Type::Generic,
+        };
+
+        self.call_stack.push((callee_key, func_type));
+
+        let was_generic = self.in_generic_context;
+        let prev_args = self.current_args.clone();
+        self.in_generic_context = false;
+        self.current_args = arg_types.clone();
+        self.push_scope();
+
+        let param_list_binding = func_expr.param_list();
+        let param_list = param_list_binding.as_node().unwrap();
+        let param_list = ParamList::cast(param_list.clone()).unwrap();
+
+        for (param, arg_node) in param_list.params().zip(arg_nodes.iter()) {
+          let param_name_binding = param.param_name();
+          let param_name = param_name_binding.as_node().unwrap();
+          let param_name = Ident::cast(param_name.clone()).unwrap();
+          let param_name_token = param_name.name();
+          let param_name = param_name_token.as_token().unwrap().text();
+          self.new_var(param_name, arg_node.clone());
+        }
+
+        let return_ty = self.check(func_expr.body().as_node().unwrap());
+        self.in_generic_context = was_generic;
+        self.current_args = prev_args;
+        self.pop_scope();
+        self.call_stack.pop();
+        return return_ty;
+      }
     }
 
     let callee_ty = self.check(callee);
@@ -203,52 +260,49 @@ impl TypeChecker {
           }
         }
 
-        let func_node = source_node.clone();
+        if let Some(func_node) = source_node {
+          if let Some(AstNode::FnExpr(func_expr)) = AstNode::cast(func_node.clone()) {
+            let start = func_node.text_range().start();
+            let callee_key = format!("{:?}@{:?}", start, arg_types);
+            let func_type = FuncType {
+              params: arg_types.clone(),
+              return_type: Type::Generic,
+            };
 
-        if let Some(AstNode::FnExpr(func_expr)) =
-          func_node.as_ref().and_then(|n| AstNode::cast(n.clone()))
-        {
-          let callee_key = format!("{:?}@{}", func_node, arg_types.len());
-          let func_type = FuncType {
-            params: arg_types.clone(),
-            return_type: Type::Generic,
-          };
+            self.call_stack.push((callee_key, func_type));
 
-          if let Some((_, existing)) = self.call_stack.iter().find(|(name, _)| name == &callee_key)
-          {
-            if *existing != func_type {
-              panic!("Infinite monomorphization!");
+            let was_generic = self.in_generic_context;
+            let prev_args = self.current_args.clone();
+            self.in_generic_context = false;
+            self.current_args = arg_types.clone();
+            self.push_scope();
+
+            let param_list_binding = func_expr.param_list();
+            let param_list = param_list_binding.as_node().unwrap();
+            let param_list = ParamList::cast(param_list.clone()).unwrap();
+
+            for (param, arg_node) in param_list.params().zip(arg_nodes.iter()) {
+              let param_name_binding = param.param_name();
+              let param_name = param_name_binding.as_node().unwrap();
+              let param_name = Ident::cast(param_name.clone()).unwrap();
+              let param_name_token = param_name.name();
+              let param_name = param_name_token.as_token().unwrap().text();
+              self.new_var(param_name, arg_node.clone());
             }
-            return existing.return_type.clone();
+
+            let return_ty = self.check(func_expr.body().as_node().unwrap());
+            self.in_generic_context = was_generic;
+            self.current_args = prev_args;
+            self.pop_scope();
+            self.call_stack.pop();
+            return return_ty;
           }
-
-          self.call_stack.push((callee_key, func_type));
-          self.in_generic_context = true;
-          self.push_scope();
-
-          let param_list_binding = func_expr.param_list();
-          let param_list = param_list_binding.as_node().unwrap();
-          let param_list = ParamList::cast(param_list.clone()).unwrap();
-
-          for (param, arg_node) in param_list.params().zip(arg_nodes.iter()) {
-            let param_name_binding = param.param_name();
-            let param_name = param_name_binding.as_node().unwrap();
-            let param_name = Ident::cast(param_name.clone()).unwrap();
-            let param_name_token = param_name.name();
-            let param_name = param_name_token.as_token().unwrap().text();
-            self.new_var(param_name, arg_node.clone());
-          }
-
-          let return_ty = self.check(func_expr.body().as_node().unwrap());
-          self.in_generic_context = false;
-          self.pop_scope();
-          self.call_stack.pop();
-          return return_ty;
         }
 
         *return_type
       }
       Type::Error => Type::Error,
+      Type::Generic => Type::Generic,
       _ => Type::Error,
     }
   }
@@ -258,8 +312,8 @@ impl TypeChecker {
     let lhs = lhs_binding.as_node().unwrap();
     let lhs_ty = self.check(lhs);
 
-    let method_name = node.method_name();
-    let method_name = method_name.as_token().unwrap().text();
+    let method_name_binding = node.method_name();
+    let method_name = method_name_binding.as_token().unwrap().text();
 
     let args_binding = node.args();
     let args_node = args_binding.as_node().unwrap();
@@ -273,6 +327,15 @@ impl TypeChecker {
     }
 
     self.check_method(&lhs_ty, method_name, &arg_types)
+  }
+
+  fn check_prefix_expr(&mut self, node: &PrefixExpr) -> Type {
+    let rhs_ty = self.check(node.rhs().as_node().unwrap());
+    let op = node.operator();
+    let op = op.as_node().unwrap();
+    let op = op.children_with_tokens().nth(1).unwrap();
+    let op = op.as_token().unwrap().text();
+    self.check_method(&rhs_ty, op, &[])
   }
 
   fn check_binary_expr(&mut self, node: &BinaryExpr) -> Type {
@@ -292,6 +355,68 @@ impl TypeChecker {
     self.check_method(&lhs_ty, op, &vec![rhs_ty])
   }
 
+  fn check_match_expr(&mut self, node: &MatchExpr) -> Type {
+    let discriminant = node.discriminant();
+    let discriminant = discriminant.as_node().unwrap();
+    let discriminant_ty = self.check(discriminant);
+
+    let branches = node.match_branches();
+    let branches = branches.as_node().unwrap();
+    let branches = MatchBranches::cast(branches.clone()).unwrap();
+
+    let mut branch_types = Vec::new();
+
+    for branch in branches.children() {
+      if let Some(branch) = MatchBranch::cast(branch) {
+        let pattern = branch.pattern();
+        let pattern = pattern.as_node().unwrap();
+        let pattern_ty = self.check(pattern);
+
+        if pattern_ty != Type::Generic
+          && discriminant_ty != Type::Generic
+          && pattern_ty != discriminant_ty
+        {
+          return Type::Error;
+        }
+
+        let when_clause = branch.when_clause();
+        let when_clause = when_clause.as_node().unwrap();
+        let when_clause = WhenClause::cast(when_clause.clone()).unwrap();
+        let guard = when_clause.guard_clause();
+        let guard = guard.as_node().unwrap();
+        if guard.first_child().is_some() {
+          let guard_ty = self.check(guard);
+          if guard_ty != Type::Bool && guard_ty != Type::Generic {
+            return Type::Error;
+          }
+        }
+
+        let expr = branch.expr();
+        let expr = expr.as_node().unwrap();
+        branch_types.push(self.check(expr));
+      }
+    }
+
+    let else_clause = node.else_clause();
+    let else_clause = else_clause.as_node().unwrap();
+    if else_clause.first_child().is_some() {
+      if let Some(else_clause) = ElseClause::cast(else_clause.clone()) {
+        branch_types.push(self.check(else_clause.expr().as_node().unwrap()));
+      }
+    }
+
+    let first = branch_types.first().cloned().unwrap_or(Type::Error);
+
+    if branch_types
+      .iter()
+      .all(|t| t == &first || t == &Type::Generic)
+    {
+      first
+    } else {
+      Type::Error
+    }
+  }
+
   fn check_method(&self, ty: &Type, method: &str, args: &[Type]) -> Type {
     match ty {
       Type::Error => Type::Error,
@@ -301,6 +426,7 @@ impl TypeChecker {
         "<" | ">" | "<=" | ">=" | "=" | "!=" if args.len() == 1 && args[0] == Type::Int32 => {
           Type::Bool
         }
+        "-" if args.is_empty() => Type::Int32,
         _ => Type::Error,
       },
       Type::Float64 => match method {
@@ -313,6 +439,7 @@ impl TypeChecker {
       Type::Bool => match method {
         "and" | "or" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
         "=" | "!=" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
+        "not" if args.is_empty() => Type::Bool,
         _ => Type::Error,
       },
       Type::String => match method {
