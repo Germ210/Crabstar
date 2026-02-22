@@ -16,10 +16,10 @@ fn main() {
       fn(z): z * 2,
       10
     )
-
   "#;
 
   let (ast, err) = parser().parse(test_script).into_output_errors();
+
   if let Some(root_node) = ast {
     dbg!(&root_node);
 

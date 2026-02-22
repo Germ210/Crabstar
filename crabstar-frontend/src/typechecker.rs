@@ -197,16 +197,19 @@ impl TypeChecker {
 
     if let Some(func_node) = func_node_opt.clone() {
       let start = func_node.text_range().start();
-      let callee_key = format!("{:?}@{:?}", start, arg_types);
+      let base_key = format!("{:?}", start);
 
-      if let Some((_, existing)) = self.call_stack.iter().find(|(name, _)| name == &callee_key) {
-        if existing.params != arg_types {
-          panic!("Infinite monomorphization!");
+      for (key, existing) in self.call_stack.iter() {
+        if key.starts_with(&base_key) {
+          if existing.params != arg_types {
+            panic!("Impossible monomorphization!");
+          }
+          return existing.return_type.clone();
         }
-        return existing.return_type.clone();
       }
 
       if let Some(AstNode::FnExpr(func_expr)) = AstNode::cast(func_node.clone()) {
+        let callee_key = format!("{:?}@{:?}", start, arg_types);
         let func_type = FuncType {
           params: arg_types.clone(),
           return_type: Type::Generic,
