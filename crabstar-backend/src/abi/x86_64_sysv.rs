@@ -50,11 +50,7 @@ fn merge_classes(a: RegClass, b: RegClass) -> RegClass {
   RegClass::Sse
 }
 
-fn classify_argument(
-  ty: &FfiType,
-  classes: &mut [RegClass; MAX_CLASSES],
-  byte_offset: usize,
-) -> usize {
+fn classify_arg(ty: &FfiType, classes: &mut [RegClass; MAX_CLASSES], byte_offset: usize) -> usize {
   match ty.ty {
     AbiType::U8
     | AbiType::I8
@@ -132,7 +128,7 @@ fn classify_argument(
       for elem in &ty.elements {
         field_offset = align_up(field_offset, elem.alignment as usize);
         let mut subclasses = [RegClass::No; MAX_CLASSES];
-        let num = classify_argument(elem, &mut subclasses, field_offset % 8);
+        let num = classify_arg(elem, &mut subclasses, field_offset % 8);
         if num == 0 {
           return 0;
         }
@@ -228,14 +224,14 @@ fn classify_argument(
   }
 }
 
-fn examine_argument(
+fn examine_arg(
   ty: &FfiType,
   classes: &mut [RegClass; MAX_CLASSES],
   in_return: bool,
   ngpr: &mut usize,
   nsse: &mut usize,
 ) -> usize {
-  let n = classify_argument(ty, classes, 0);
+  let n = classify_arg(ty, classes, 0);
   if n == 0 {
     return 0;
   }
@@ -358,7 +354,7 @@ fn sse_reg(idx: usize) -> Option<SseReg> {
 fn classify_ret(ty: &FfiType, classes: &mut [RegClass; MAX_CLASSES]) -> RetLocation {
   let mut ngpr = 0usize;
   let mut nsse = 0usize;
-  let n = examine_argument(ty, classes, true, &mut ngpr, &mut nsse);
+  let n = examine_arg(ty, classes, true, &mut ngpr, &mut nsse);
 
   if n == 0 {
     return RetLocation::Sret;
@@ -479,7 +475,7 @@ impl CallingConvention for SysV {
       let mut classes = [RegClass::No; MAX_CLASSES];
       let mut ng = 0usize;
       let mut ns = 0usize;
-      let n = examine_argument(arg, &mut classes, false, &mut ng, &mut ns);
+      let n = examine_arg(arg, &mut classes, false, &mut ng, &mut ns);
 
       if n == 0 || gprcount + ng > MAX_GPR_REGS || ssecount + ns > MAX_SSE_REGS {
         let align = usize::max(arg.alignment as usize, 8);
