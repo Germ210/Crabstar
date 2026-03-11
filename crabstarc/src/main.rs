@@ -1,37 +1,56 @@
-use crabstar_frontend::ast::Root;
-use crabstar_frontend::parser::{parser, Parser};
-use crabstar_frontend::typechecker::TypeChecker;
+use crabstar_backend::{
+  abi::{
+    types::FfiCif,
+    types::{AbiType, CallingConvention, FfiType},
+    x86_64_windows::{RetLocation, Win64Abi, Win64CifData},
+  },
+  codegen::generate_code,
+  ir::builder::FunctionBuilder,
+  regalloc::x86_64::Win64,
+};
+use std::fs;
 
 fn main() {
-  let test_script = r#"
-    let fib: fn(n): match n {
-      of 0: 0
-      of 1: 1
-    } else: fib(n - 1) + fib(n - 2)
-    in fib(10)
-
-    let compose: fn(f, g, x): f(g(x)) in
-    compose(
-      fn(y): y + 1,
-      fn(z): z * 2,
-      10
-    )
-  "#;
-
-  let (ast, err) = parser().parse(test_script).into_output_errors();
-
-  if let Some(root_node) = ast {
-    dbg!(&root_node);
-
-    let root = Root::cast(root_node).unwrap();
-    let mut checker = TypeChecker::new();
-
-    for child in root.let_exprs() {
-      dbg!(&child);
-      let ty = checker.check(child.syntax());
-      println!("Type: {:?}", ty);
-    }
-  } else {
-    dbg!(err);
-  }
+  let (mut fb, params) = FunctionBuilder::new(&[AbiType::I64, AbiType::I64]);
+  let [x, y] = params.as_slice() else { panic!() };
+  let cmp = fb.gt(*x, *y);
+  let result = fb.if_else(
+    cmp,
+    &[*x, *y],
+    |fb, inputs| fb.div(inputs[0], inputs[1]),
+    |fb, inputs| fb.div(inputs[1], inputs[0]),
+  );
+  fb.ret(result);
+  let cfg = fb.finish();
+  dbg!(&cfg);
+  let mut cif = FfiCif::new(
+    Win64Abi::Win64,
+    vec![
+      FfiType {
+        size: 8,
+        alignment: 8,
+        ty: AbiType::I64,
+        elements: vec![],
+      },
+      FfiType {
+        size: 8,
+        alignment: 8,
+        ty: AbiType::I64,
+        elements: vec![],
+      },
+    ],
+    FfiType {
+      size: 8,
+      alignment: 8,
+      ty: AbiType::I64,
+      elements: vec![],
+    },
+    Win64CifData {
+      ret_location: RetLocation::Rax,
+      arg_locations: Vec::new(),
+    },
+  );
+  Win64::prep(&mut cif);
+  let obj_bytes = generate_code::<Win64>(&cfg, &cif, "divmax");
+  fs::write("target/out.o", &obj_bytes).unwrap();
 }

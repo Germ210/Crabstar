@@ -1,4 +1,7 @@
-use crate::abi::types::{AbiType, CallingConvention, FfiCif, FfiStatus, FfiType};
+use crate::{
+  abi::types::{AbiType, CallingConvention, FfiCif, FfiStatus, FfiType},
+  regalloc::x86_64::SysV,
+};
 
 const MAX_GPR_REGS: usize = 6;
 const MAX_SSE_REGS: usize = 8;
@@ -323,8 +326,6 @@ pub struct SysVCifData {
   pub arg_locations: Vec<ArgLocation>,
 }
 
-pub struct SysV;
-
 fn gpr_reg(idx: usize) -> Option<GprReg> {
   match idx {
     0 => Some(GprReg::Rdi),
@@ -454,6 +455,7 @@ fn assign_arg_registers(
 impl CallingConvention for SysV {
   type Abi = SysVAbi;
   type CifData = SysVCifData;
+  type PhysReg = crate::regalloc::x86_64::PhysReg;
 
   fn prep(cif: &mut FfiCif<Self>) -> FfiStatus {
     if !matches!(cif.abi, SysVAbi::Unix64) {
@@ -497,5 +499,22 @@ impl CallingConvention for SysV {
     };
 
     FfiStatus::Ok
+  }
+
+  fn arg_reg(data: &SysVCifData, idx: usize) -> Option<crate::regalloc::x86_64::PhysReg> {
+    use crate::regalloc::x86_64::PhysReg;
+    match data.arg_locations.get(idx) {
+      Some(ArgLocation::Gpr(GprReg::Rdi)) => Some(PhysReg::Rdi),
+      Some(ArgLocation::Gpr(GprReg::Rsi)) => Some(PhysReg::Rsi),
+      Some(ArgLocation::Gpr(GprReg::Rdx)) => Some(PhysReg::Rdx),
+      Some(ArgLocation::Gpr(GprReg::Rcx)) => Some(PhysReg::Rcx),
+      Some(ArgLocation::Gpr(GprReg::R8)) => Some(PhysReg::R8),
+      Some(ArgLocation::Gpr(GprReg::R9)) => Some(PhysReg::R9),
+      _ => None,
+    }
+  }
+
+  fn ret_reg(_data: &SysVCifData) -> crate::regalloc::x86_64::PhysReg {
+    crate::regalloc::x86_64::PhysReg::Rax
   }
 }

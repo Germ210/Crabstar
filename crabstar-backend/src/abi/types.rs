@@ -38,10 +38,12 @@ pub enum FfiStatus {
 pub trait CallingConvention {
   type Abi;
   type CifData;
-
+  type PhysReg: Copy + PartialEq;
   fn prep(cif: &mut FfiCif<Self>) -> FfiStatus
   where
     Self: Sized;
+  fn arg_reg(data: &Self::CifData, idx: usize) -> Option<Self::PhysReg>;
+  fn ret_reg(data: &Self::CifData) -> Self::PhysReg;
 }
 
 pub struct FfiCif<CC: CallingConvention> {

@@ -1,4 +1,7 @@
-use crate::abi::types::{AbiType, CallingConvention, FfiCif, FfiStatus, FfiType};
+use crate::{
+  abi::types::{AbiType, CallingConvention, FfiCif, FfiStatus, FfiType},
+  regalloc::x86_64::Win64,
+};
 
 #[derive(Debug)]
 pub enum Win64Abi {
@@ -59,11 +62,10 @@ pub struct Win64CifData {
   pub arg_locations: Vec<ArgLocation>,
 }
 
-pub struct Win64;
-
 impl CallingConvention for Win64 {
   type Abi = Win64Abi;
   type CifData = Win64CifData;
+  type PhysReg = crate::regalloc::x86_64::PhysReg;
 
   fn prep(cif: &mut FfiCif<Self>) -> FfiStatus {
     let is_gnu = matches!(cif.abi, Win64Abi::GnuW64);
@@ -87,8 +89,22 @@ impl CallingConvention for Win64 {
       ret_location,
       arg_locations,
     };
-
     FfiStatus::Ok
+  }
+
+  fn arg_reg(data: &Win64CifData, idx: usize) -> Option<crate::regalloc::x86_64::PhysReg> {
+    use crate::regalloc::x86_64::PhysReg;
+    match data.arg_locations.get(idx) {
+      Some(ArgLocation::Int(IntReg::Rcx)) => Some(PhysReg::Rcx),
+      Some(ArgLocation::Int(IntReg::Rdx)) => Some(PhysReg::Rdx),
+      Some(ArgLocation::Int(IntReg::R8)) => Some(PhysReg::R8),
+      Some(ArgLocation::Int(IntReg::R9)) => Some(PhysReg::R9),
+      _ => None,
+    }
+  }
+
+  fn ret_reg(_data: &Win64CifData) -> crate::regalloc::x86_64::PhysReg {
+    crate::regalloc::x86_64::PhysReg::Rax
   }
 }
 
