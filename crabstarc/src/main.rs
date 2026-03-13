@@ -1,56 +1,46 @@
-use crabstar_backend::{
-  abi::{
-    types::FfiCif,
-    types::{AbiType, CallingConvention, FfiType},
-    x86_64_windows::{RetLocation, Win64Abi, Win64CifData},
-  },
-  codegen::generate_code,
-  ir::builder::FunctionBuilder,
-  regalloc::x86_64::Win64,
+mod ir_lowering;
+
+use crabstar_backend::abi::types::AbiType;
+use crabstar_frontend::{
+  ast::{AstNode, Root},
+  parser::{parser, Parser},
+  typechecker::TypeChecker,
+  types::Type,
 };
-use std::fs;
+use ir_lowering::Compiler;
 
 fn main() {
-  let (mut fb, params) = FunctionBuilder::new(&[AbiType::I64, AbiType::I64]);
-  let [x, y] = params.as_slice() else { panic!() };
-  let cmp = fb.gt(*x, *y);
-  let result = fb.if_else(
-    cmp,
-    &[*x, *y],
-    |fb, inputs| fb.div(inputs[0], inputs[1]),
-    |fb, inputs| fb.div(inputs[1], inputs[0]),
-  );
-  fb.ret(result);
-  let cfg = fb.finish();
-  dbg!(&cfg);
-  let mut cif = FfiCif::new(
-    Win64Abi::Win64,
-    vec![
-      FfiType {
-        size: 8,
-        alignment: 8,
-        ty: AbiType::I64,
-        elements: vec![],
-      },
-      FfiType {
-        size: 8,
-        alignment: 8,
-        ty: AbiType::I64,
-        elements: vec![],
-      },
-    ],
-    FfiType {
-      size: 8,
-      alignment: 8,
-      ty: AbiType::I64,
-      elements: vec![],
-    },
-    Win64CifData {
-      ret_location: RetLocation::Rax,
-      arg_locations: Vec::new(),
-    },
-  );
-  Win64::prep(&mut cif);
-  let obj_bytes = generate_code::<Win64>(&cfg, &cif, "divmax");
-  fs::write("target/out.o", &obj_bytes).unwrap();
+  let source = "let myfunc: fn(a: int32, b: int32) -> int32: a + b";
+  let (ast, err) = parser().parse(source).into_output_errors();
+
+  if let Some(root_node) = ast {
+    let root = Root::cast(root_node).unwrap();
+    let mut checker = TypeChecker::new();
+
+    for child in root.let_exprs() {
+      let ty = checker.check(child.syntax());
+      println!("Type: {:?}", ty);
+
+      let expr = child.expr();
+      if let Some(expr_node) = expr.as_node() {
+        println!("Expr node kind: {:?}", expr_node.kind());
+        if let Some(ast_node) = AstNode::cast(expr_node.clone()) {
+          println!("AstNode: {:?}", std::mem::discriminant(&ast_node));
+          if let AstNode::FnExpr(_) = ast_node {
+            println!("Found FnExpr!");
+            if let Type::Fn { params, .. } = ty {
+              println!("Compiling with {} params", params.len());
+              let param_types: Vec<AbiType> = params.iter().map(Compiler::type_to_abi).collect();
+              let mut compiler = Compiler::new();
+              let cfg = compiler.compile_function(expr_node, &param_types);
+              println!("\nCompiled IR:");
+              println!("{:#?}", cfg);
+            }
+          }
+        }
+      }
+    }
+  } else {
+    dbg!(err);
+  }
 }

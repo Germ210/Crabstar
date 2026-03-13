@@ -1,7 +1,8 @@
 use crate::{
   ast::{
     ArgList, AstNode, BinaryExpr, CallExpr, ElseClause, FnExpr, Ident, InExpr, LetExpr, Literal,
-    MatchBranch, MatchBranches, MatchExpr, MethodCall, ParamList, PrefixExpr, WhenClause,
+    MatchBranch, MatchBranches, MatchExpr, MethodCall, ParamList, PrefixExpr, TypeApp, TypeExpr,
+    WhenClause,
   },
   syntax::{SyntaxKind, SyntaxNode},
   types::{FuncType, Type},
@@ -14,6 +15,8 @@ pub struct TypeChecker {
   checked_nodes: HashMap<(SyntaxNode, Vec<Type>), Type>,
   in_generic_context: bool,
   current_args: Vec<Type>,
+  behaviors: HashMap<String, Type>,
+  declared_types: HashMap<String, Type>,
 }
 
 impl TypeChecker {
@@ -24,6 +27,8 @@ impl TypeChecker {
       checked_nodes: HashMap::new(),
       in_generic_context: false,
       current_args: Vec::new(),
+      behaviors: HashMap::new(),
+      declared_types: HashMap::new(),
     }
   }
 
@@ -127,6 +132,9 @@ impl TypeChecker {
     let result = if in_expr.first_child().is_none() {
       Type::Null
     } else {
+      if is_top_level {
+        panic!("top-level let bindings cannot have 'in' clause");
+      }
       let in_expr = InExpr::cast(in_expr.clone()).unwrap();
       self.check(in_expr.expr().as_node().unwrap())
     };
@@ -136,6 +144,47 @@ impl TypeChecker {
     }
 
     result
+  }
+
+  fn parse_type_expr(&self, type_expr_node: &SyntaxNode) -> Type {
+    if type_expr_node.first_child().is_none() {
+      return Type::Generic;
+    }
+
+    if let Some(type_expr) = TypeExpr::cast(type_expr_node.clone()) {
+      let inner = type_expr.inner_type();
+      if let Some(inner_node) = inner.as_node() {
+        if let Some(type_app) = TypeApp::cast(inner_node.clone()) {
+          let base_type = type_app.base_type();
+          if let Some(base_node) = base_type.as_node() {
+            if let Some(ident) = Ident::cast(base_node.clone()) {
+              let name = ident.name();
+              let type_name = name.as_token().unwrap().text();
+              return match type_name {
+                "int32" => Type::Int32,
+                "float64" => Type::Float64,
+                "bool" => Type::Bool,
+                "string" => Type::String,
+                "null" => Type::Null,
+                _ => Type::Generic,
+              };
+            }
+          }
+        } else if let Some(ident) = Ident::cast(inner_node.clone()) {
+          let name = ident.name();
+          let type_name = name.as_token().unwrap().text();
+          return match type_name {
+            "int32" => Type::Int32,
+            "float64" => Type::Float64,
+            "bool" => Type::Bool,
+            "string" => Type::String,
+            "null" => Type::Null,
+            _ => Type::Generic,
+          };
+        }
+      }
+    }
+    Type::Generic
   }
 
   fn check_fn_expr(&mut self, node: &FnExpr) -> Type {
@@ -153,20 +202,41 @@ impl TypeChecker {
       let param_name = param.param_name();
       let param_name = param_name.as_node().unwrap();
       let param_name = Ident::cast(param_name.clone()).unwrap();
-      let param_name = param_name.name();
-      let param_name = param_name.as_token().unwrap().text();
-      self.new_var(param_name, param.syntax().clone());
-      param_types.push(Type::Generic);
+      let param_name_str = param_name.name();
+      let param_name_str = param_name_str.as_token().unwrap().text();
+
+      let type_expr = param.type_expr();
+      let param_type = if let Some(type_node) = type_expr.as_node() {
+        self.parse_type_expr(type_node)
+      } else {
+        Type::Generic
+      };
+
+      self.new_var(param_name_str, param.syntax().clone());
+      param_types.push(param_type);
     }
 
+    let return_type_binding = node.return_type();
+    let declared_return_type = if let Some(return_type_node) = return_type_binding.as_node() {
+      self.parse_type_expr(return_type_node)
+    } else {
+      Type::Generic
+    };
+
     let body_ty = self.check(node.body().as_node().unwrap());
+
+    let final_return_type = if declared_return_type != Type::Generic {
+      declared_return_type
+    } else {
+      body_ty
+    };
 
     self.pop_scope();
     self.in_generic_context = was_generic;
 
     Type::Fn {
       params: param_types,
-      return_type: Box::new(body_ty),
+      return_type: Box::new(final_return_type),
       source_node: Some(node.syntax().clone()),
     }
   }

@@ -32,6 +32,10 @@ pub enum Type {
   },
   Generic,
   Var(String),
+  WithBehavior {
+    base_type: Box<Type>,
+    behavior_name: String,
+  },
   Error,
 }
 
