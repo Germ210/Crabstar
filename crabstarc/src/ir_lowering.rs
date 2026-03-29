@@ -1,12 +1,12 @@
 use crabstar_backend::{
-  abi::types::AbiType,
+  abi::types::{AbiType, FfiCif, FfiType},
   ir::{
     builder::FunctionBuilder,
-    graph::{Cfg, Operand},
+    graph::{Cfg, Operand, Terminator},
   },
 };
 use crabstar_frontend::{
-  ast::{AstNode, BinaryExpr, CallExpr, Ident, LetExpr, Literal, MatchExpr, PrefixExpr},
+  ast::{AstNode, BinaryExpr, CallExpr, Ident, LetExpr, Literal, PrefixExpr},
   syntax::SyntaxNode,
   types::Type,
 };
@@ -23,19 +23,62 @@ impl Compiler {
     }
   }
 
+  pub fn build_with_ffi<C>(&mut self, let_expr: &LetExpr, ty: &Type) -> Option<(Cfg, FfiCif<C>)>
+  where
+    C: crabstar_backend::abi::types::CallingConvention,
+    C::CifData: Default,
+    C::Abi: Default,
+  {
+    let cfg_opt = self.compile_let_expr_fn(let_expr, ty)?;
+    let (cfg, param_types) = cfg_opt;
+
+    let ffi_params: Vec<FfiType> = param_types
+      .iter()
+      .map(|ty| FfiType {
+        size: 8,
+        alignment: 8,
+        ty: ty.clone(),
+        elements: vec![],
+      })
+      .collect();
+
+    let ret_abi = cfg
+      .blocks
+      .last()
+      .and_then(|b| match &b.terminator {
+        Terminator::Return(Some(Operand::Val(v))) => cfg
+          .blocks
+          .iter()
+          .flat_map(|blk| blk.params.iter())
+          .find(|p| p.val == *v)
+          .map(|p| p.ty.clone()),
+        Terminator::Return(None) => Some(AbiType::Void),
+        _ => Some(AbiType::Void),
+      })
+      .unwrap_or(AbiType::Void);
+
+    let ffi_ret = FfiType {
+      size: 8,
+      alignment: 8,
+      ty: ret_abi,
+      elements: vec![],
+    };
+
+    let mut cif = FfiCif::new(C::Abi::default(), ffi_params, ffi_ret, Default::default());
+    C::prep(&mut cif);
+
+    Some((cfg, cif))
+  }
+
   pub fn type_to_abi(ty: &Type) -> AbiType {
+    dbg!(&ty);
     match ty {
-      Type::Int32 => AbiType::I64,
-      _ => panic!("type not yet supported in IR: {:?}", ty),
+      Type::Int32 => AbiType::I32,
+      Type::Int64 => AbiType::I64,
+      Type::Float32 => AbiType::Float,
+      Type::Float64 => AbiType::Double,
+      _ => unimplemented!(),
     }
-  }
-
-  fn push_scope(&mut self) {
-    self.env.push(HashMap::new());
-  }
-
-  fn pop_scope(&mut self) {
-    self.env.pop();
   }
 
   fn lookup_var(&self, name: &str) -> Option<Operand> {
@@ -53,31 +96,29 @@ impl Compiler {
 
   pub fn compile_function(&mut self, node: &SyntaxNode, param_types: &[AbiType]) -> Cfg {
     let (mut builder, param_ops) = FunctionBuilder::new(param_types);
-
     if let Some(AstNode::FnExpr(fn_expr)) = AstNode::cast(node.clone()) {
-      let param_list = fn_expr.param_list();
-      if let Some(param_list_node) = param_list.as_node() {
+      if let Some(param_list_node) = fn_expr.param_list().as_node() {
         if let Some(param_list) = crabstar_frontend::ast::ParamList::cast(param_list_node.clone()) {
           for (param, op) in param_list.params().zip(param_ops.iter()) {
-            let param_name = param.param_name();
-            if let Some(param_name_node) = param_name.as_node() {
-              if let Some(ident) = Ident::cast(param_name_node.clone()) {
-                let name = ident.name();
-                let name = name.as_token().unwrap().text();
-                self.bind_var(name, *op);
-              }
+            if let Some(ident) = param
+              .param_name()
+              .as_node()
+              .map(|n| n.clone())
+              .and_then(|n| Ident::cast(n))
+            {
+              let name_binding = ident.name();
+              let name = name_binding.as_token().unwrap().text();
+              self.bind_var(name, *op);
             }
           }
         }
       }
 
-      let body = fn_expr.body();
-      if let Some(body_node) = body.as_node() {
+      if let Some(body_node) = fn_expr.body().as_node() {
         let result = self.compile_expr(&mut builder, body_node);
         builder.ret(result);
       }
     }
-
     builder.finish()
   }
 
@@ -89,16 +130,8 @@ impl Compiler {
       Some(AstNode::PrefixExpr(prefix)) => self.compile_prefix(builder, &prefix),
       Some(AstNode::CallExpr(call)) => self.compile_call(builder, &call),
       Some(AstNode::LetExpr(let_expr)) => self.compile_let(builder, &let_expr),
-      Some(AstNode::MatchExpr(match_expr)) => self.compile_match(builder, &match_expr),
-      Some(AstNode::ParenExpr(paren)) => {
-        let inner = paren.inner();
-        if let Some(inner_node) = inner.as_node() {
-          self.compile_expr(builder, inner_node)
-        } else {
-          builder.iconst(0)
-        }
-      }
-      _ => builder.iconst(0),
+      Some(AstNode::MatchExpr(_)) => unimplemented!(),
+      _ => unimplemented!(),
     }
   }
 
@@ -106,41 +139,29 @@ impl Compiler {
     use crabstar_frontend::syntax::SyntaxKind;
     match lit.literal().kind() {
       SyntaxKind::Int => {
-        let token = lit.literal();
-        let token = token.as_token().unwrap();
-        let text = token.text();
-        let val = text.parse::<i64>().unwrap_or(0);
+        let text = lit.literal();
+        let text = text.as_token().unwrap().text();
+        let val = text.parse::<i64>().unwrap();
         builder.iconst(val)
       }
-      SyntaxKind::KwTrue | SyntaxKind::KwFalse => {
-        unimplemented!("bool literals not yet supported in IR")
-      }
-      SyntaxKind::KwNull => {
-        unimplemented!("null literals not yet supported in IR")
-      }
-      _ => builder.iconst(0),
+      _ => unimplemented!(),
     }
   }
 
-  fn compile_ident(&mut self, builder: &mut FunctionBuilder, ident: &Ident) -> Operand {
-    let name = ident.name();
-    let name = name.as_token().unwrap().text();
-    self.lookup_var(name).unwrap_or(builder.iconst(0))
+  fn compile_ident(&mut self, _builder: &mut FunctionBuilder, ident: &Ident) -> Operand {
+    let name_binding = ident.name();
+    let name = name_binding.as_token().unwrap().text();
+    self.lookup_var(name).unwrap_or_else(|| unimplemented!())
   }
 
   fn compile_binary(&mut self, builder: &mut FunctionBuilder, binop: &BinaryExpr) -> Operand {
-    let lhs = binop.lhs();
-    let lhs_node = lhs.as_node().unwrap();
-    let lhs_op = self.compile_expr(builder, lhs_node);
+    let lhs_op = self.compile_expr(builder, binop.lhs().as_node().unwrap());
+    let rhs_op = self.compile_expr(builder, binop.rhs().as_node().unwrap());
 
-    let rhs = binop.rhs();
-    let rhs_node = rhs.as_node().unwrap();
-    let rhs_op = self.compile_expr(builder, rhs_node);
-
-    let op = binop.operator();
-    let op_node = op.as_node().unwrap();
-    let op_token = op_node.children_with_tokens().nth(1).unwrap();
-    let op_text = op_token.as_token().unwrap().text();
+    let op_node = binop.operator().as_node().unwrap().clone();
+    let op_token_binding = op_node.children_with_tokens().nth(1).unwrap();
+    let op_token = op_token_binding.as_token().unwrap();
+    let op_text = op_token.text();
 
     match op_text {
       "+" => builder.add(lhs_op, rhs_op),
@@ -153,152 +174,76 @@ impl Compiler {
       "<=" => builder.le(lhs_op, rhs_op),
       ">" => builder.gt(lhs_op, rhs_op),
       ">=" => builder.ge(lhs_op, rhs_op),
-      "and" => {
-        let zero = builder.iconst(0);
-        let lhs_bool = builder.ne(lhs_op, zero);
-        let zero2 = builder.iconst(0);
-        let rhs_bool = builder.ne(rhs_op, zero2);
-        let result = builder.mul(lhs_bool, rhs_bool);
-        let zero3 = builder.iconst(0);
-        builder.ne(result, zero3)
-      }
-      "or" => {
-        let zero = builder.iconst(0);
-        let lhs_bool = builder.ne(lhs_op, zero);
-        let zero2 = builder.iconst(0);
-        let rhs_bool = builder.ne(rhs_op, zero2);
-        builder.add(lhs_bool, rhs_bool)
-      }
-      _ => builder.iconst(0),
+      _ => unimplemented!(),
     }
   }
 
   fn compile_prefix(&mut self, builder: &mut FunctionBuilder, prefix: &PrefixExpr) -> Operand {
-    let rhs = prefix.rhs();
-    let rhs_node = rhs.as_node().unwrap();
-    let rhs_op = self.compile_expr(builder, rhs_node);
+    let rhs_op = self.compile_expr(builder, prefix.rhs().as_node().unwrap());
 
-    let op = prefix.operator();
-    let op_node = op.as_node().unwrap();
-    let op_token = op_node.children_with_tokens().nth(1).unwrap();
-    let op_text = op_token.as_token().unwrap().text();
+    let op_node = prefix.operator().as_node().unwrap().clone();
+    let op_token_binding = op_node.children_with_tokens().nth(1).unwrap();
+    let op_token = op_token_binding.as_token().unwrap();
+    let op_text = op_token.text();
 
     match op_text {
       "-" => builder.neg(rhs_op),
-      "not" => builder.not(rhs_op),
-      _ => rhs_op,
+      _ => unimplemented!(),
     }
   }
 
   fn compile_call(&mut self, builder: &mut FunctionBuilder, call: &CallExpr) -> Operand {
-    let callee = call.callee();
-    let callee_node = callee.as_node().unwrap();
+    let callee_node = call.callee().as_node().unwrap().clone();
+    let args_node = call.args().as_node().unwrap().clone();
+    let args_list = crabstar_frontend::ast::ArgList::cast(args_node).unwrap();
+    let arg_ops: Vec<Operand> = args_list
+      .args()
+      .map(|arg| self.compile_expr(builder, arg.arg_expr().as_node().unwrap()))
+      .collect();
 
-    let args_binding = call.args();
-    let args_node = args_binding.as_node().unwrap();
-    let args_list = crabstar_frontend::ast::ArgList::cast(args_node.clone()).unwrap();
-
-    let mut arg_ops = Vec::new();
-    for arg in args_list.args() {
-      let arg_expr = arg.arg_expr();
-      let arg_expr_node = arg_expr.as_node().unwrap();
-      arg_ops.push(self.compile_expr(builder, arg_expr_node));
-    }
-
-    if let Some(AstNode::Ident(ident)) = AstNode::cast(callee_node.clone()) {
-      let name = ident.name();
-      let name = name.as_token().unwrap().text();
+    if let Some(AstNode::Ident(ident)) = AstNode::cast(callee_node) {
+      let name_binding = ident.name();
+      let name = name_binding.as_token().unwrap().text();
       builder.call(name, arg_ops)
     } else {
-      builder.iconst(0)
+      unimplemented!()
     }
   }
 
   fn compile_let(&mut self, builder: &mut FunctionBuilder, let_expr: &LetExpr) -> Operand {
-    let name = let_expr.name();
-    let name = crabstar_frontend::ast::Ident::cast(name.into_node().unwrap())
-      .unwrap()
-      .name();
-    let name = name.as_token().unwrap().text();
+    let ident_node =
+      crabstar_frontend::ast::Ident::cast(let_expr.name().into_node().unwrap().clone()).unwrap();
+    let name_binding = ident_node.name();
+    let name = name_binding.as_token().unwrap().text();
 
-    let expr = let_expr.expr();
-    let expr_node = expr.as_node().unwrap();
-    let val = self.compile_expr(builder, expr_node);
-
+    let val = self.compile_expr(builder, let_expr.expr().as_node().unwrap());
     self.bind_var(name, val);
 
-    let in_expr = let_expr.in_expr();
-    let in_expr_node = in_expr.as_node().unwrap();
-
+    let in_expr_node = let_expr.in_expr().as_node().unwrap().clone();
     if in_expr_node.first_child().is_none() {
-      builder.iconst(0)
+      unimplemented!()
     } else {
-      let in_expr = crabstar_frontend::ast::InExpr::cast(in_expr_node.clone()).unwrap();
-      let expr = in_expr.expr();
-      let expr_node = expr.as_node().unwrap();
+      let expr_node = crabstar_frontend::ast::InExpr::cast(in_expr_node).unwrap();
+      let expr_node = expr_node.expr();
+      let expr_node = expr_node.as_node().unwrap();
       self.compile_expr(builder, expr_node)
     }
   }
 
-  fn compile_match(&mut self, builder: &mut FunctionBuilder, match_expr: &MatchExpr) -> Operand {
-    let discriminant = match_expr.discriminant();
-    let discriminant_node = discriminant.as_node().unwrap();
-    let discriminant_val = self.compile_expr(builder, discriminant_node);
-
-    let branches = match_expr.match_branches();
-    let branches_node = branches.as_node().unwrap();
-    let branches = crabstar_frontend::ast::MatchBranches::cast(branches_node.clone()).unwrap();
-
-    let mut result = builder.iconst(0);
-
-    for branch in branches.children() {
-      if let Some(branch) = crabstar_frontend::ast::MatchBranch::cast(branch) {
-        let pattern = branch.pattern();
-        let pattern_node = pattern.as_node().unwrap();
-        let pattern_val = self.compile_expr(builder, pattern_node);
-
-        let when_clause = branch.when_clause();
-        let when_clause_node = when_clause.as_node().unwrap();
-        let when_clause =
-          crabstar_frontend::ast::WhenClause::cast(when_clause_node.clone()).unwrap();
-        let guard = when_clause.guard_clause();
-        let guard_node = guard.as_node().unwrap();
-
-        let cond = if guard_node.first_child().is_some() {
-          let guard_val = self.compile_expr(builder, guard_node);
-          let pattern_match = builder.eq(discriminant_val, pattern_val);
-          builder.mul(pattern_match, guard_val)
-        } else {
-          builder.eq(discriminant_val, pattern_val)
-        };
-
-        let expr = branch.expr();
-        let expr_node = expr.as_node().unwrap();
-
-        result = builder.if_else(
-          cond,
-          &[],
-          |b, _| {
-            let mut compiler = Compiler::new();
-            compiler.env = self.env.clone();
-            compiler.compile_expr(b, expr_node)
-          },
-          |b, _| b.iconst(0),
-        );
+  pub fn compile_let_expr_fn(
+    &mut self,
+    let_expr: &LetExpr,
+    ty: &Type,
+  ) -> Option<(Cfg, Vec<AbiType>)> {
+    if let Some(expr_node) = let_expr.expr().as_node() {
+      if let Some(AstNode::FnExpr(_)) = AstNode::cast(expr_node.clone()) {
+        if let Type::Fn { params, .. } = ty {
+          let param_types: Vec<AbiType> = params.iter().map(|ty| Self::type_to_abi(ty)).collect();
+          let cfg = self.compile_function(&expr_node, &param_types);
+          return Some((cfg, param_types));
+        }
       }
     }
-
-    let else_clause = match_expr.else_clause();
-    let else_clause_node = else_clause.as_node().unwrap();
-    if else_clause_node.first_child().is_some() {
-      if let Some(else_clause) = crabstar_frontend::ast::ElseClause::cast(else_clause_node.clone())
-      {
-        let expr = else_clause.expr();
-        let expr_node = expr.as_node().unwrap();
-        result = self.compile_expr(builder, expr_node);
-      }
-    }
-
-    result
+    None
   }
 }

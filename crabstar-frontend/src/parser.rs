@@ -175,6 +175,215 @@ fn ref_in<'src>(
   binding("ref", SyntaxKind::KwRef, SyntaxKind::RefBindingExpr, expr)
 }
 
+fn do_then<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  whitespace()
+    .then(keyword("do"))
+    .map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::KwDo.into(), "do")),
+        ],
+      )
+    })
+    .then(expr.clone())
+    .then(whitespace().then(keyword("then")).map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::KwThen.into(), "then")),
+        ],
+      )
+    }))
+    .then(expr.clone())
+    .map(|(((do_kw, first_expr), then_kw), second_expr)| {
+      GreenNode::new(
+        SyntaxKind::DoThenExpr.into(),
+        vec![
+          NodeOrToken::Node(do_kw),
+          NodeOrToken::Node(first_expr),
+          NodeOrToken::Node(then_kw),
+          NodeOrToken::Node(second_expr),
+        ],
+      )
+    })
+}
+
+fn qualified_ident<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone
+{
+  ident()
+    .then(
+      whitespace()
+        .then(just('\\'))
+        .map(|(ws, _)| {
+          GreenNode::new(
+            SyntaxKind::Punctuation.into(),
+            vec![
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::Backslash.into(), "\\")),
+            ],
+          )
+        })
+        .then(ident())
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>(),
+    )
+    .map(|(first, rest)| {
+      let mut children = vec![NodeOrToken::Node(first)];
+      for (backslash, ident) in rest {
+        children.push(NodeOrToken::Node(backslash));
+        children.push(NodeOrToken::Node(ident));
+      }
+      GreenNode::new(SyntaxKind::QualifiedIdent.into(), children)
+    })
+}
+
+fn cause_expr<'src>(
+  new_expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  whitespace()
+    .then(keyword("cause"))
+    .map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::KwCause.into(), "cause")),
+        ],
+      )
+    })
+    .then(new_expr)
+    .map(|(cause_kw, exception_expr)| {
+      GreenNode::new(
+        SyntaxKind::CauseExpr.into(),
+        vec![
+          NodeOrToken::Node(cause_kw),
+          NodeOrToken::Node(exception_expr),
+        ],
+      )
+    })
+}
+
+fn destructure_in<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+  new_expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  recursive(move |binding_expr| {
+    destructure_struct(expr.clone())
+      .then(
+        whitespace()
+          .then(just("->"))
+          .map(|(ws1, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws1.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Arrow.into(), "->")),
+              ],
+            )
+          })
+          .then(type_expr())
+          .or_not()
+          .map(|opt| {
+            opt.unwrap_or_else(|| {
+              (
+                GreenNode::new(SyntaxKind::Punctuation.into(), vec![]),
+                GreenNode::new(SyntaxKind::TypeExpr.into(), vec![]),
+              )
+            })
+          }),
+      )
+      .then(whitespace().then(just(':')).map(|(ws, _)| {
+        GreenNode::new(
+          SyntaxKind::Punctuation.into(),
+          vec![
+            NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+            NodeOrToken::Token(GreenToken::new(SyntaxKind::Colon.into(), ":")),
+          ],
+        )
+      }))
+      .then(expr.clone())
+      .then(
+        whitespace()
+          .then(keyword("else"))
+          .map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::KwElse.into(), "else")),
+              ],
+            )
+          })
+          .then(whitespace().then(just(':')).map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Colon.into(), ":")),
+              ],
+            )
+          }))
+          .then(cause_expr(new_expr.clone()))
+          .map(|((else_kw, colon), cause_expr)| {
+            GreenNode::new(
+              SyntaxKind::ElseClause.into(),
+              vec![
+                NodeOrToken::Node(else_kw),
+                NodeOrToken::Node(colon),
+                NodeOrToken::Node(cause_expr),
+              ],
+            )
+          })
+          .or_not()
+          .map(|opt| opt.unwrap_or_else(|| GreenNode::new(SyntaxKind::ElseClause.into(), vec![]))),
+      )
+      .then(
+        whitespace()
+          .then(keyword("in"))
+          .map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::KwIn.into(), "in")),
+              ],
+            )
+          })
+          .then(choice((binding_expr.clone(), expr.clone())))
+          .map(|(in_kw, in_expr)| {
+            GreenNode::new(
+              SyntaxKind::InExpr.into(),
+              vec![NodeOrToken::Node(in_kw), NodeOrToken::Node(in_expr)],
+            )
+          })
+          .or_not()
+          .map(|opt| opt.unwrap_or_else(|| GreenNode::new(SyntaxKind::InExpr.into(), vec![]))),
+      )
+      .map(
+        |(((((pattern, (arrow, ty)), colon), value), else_clause), in_expr)| {
+          GreenNode::new(
+            SyntaxKind::DestructureExpr.into(),
+            vec![
+              NodeOrToken::Node(pattern),
+              NodeOrToken::Node(arrow),
+              NodeOrToken::Node(ty),
+              NodeOrToken::Node(colon),
+              NodeOrToken::Node(value),
+              NodeOrToken::Node(else_clause),
+              NodeOrToken::Node(in_expr),
+            ],
+          )
+        },
+      )
+  })
+}
+
 fn string<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
   whitespace()
     .then(
@@ -382,11 +591,17 @@ fn struct_def<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src,
       )
     }))
     .map(|(((struct_kw, lbrace), fields), rbrace)| {
-      let mut children = vec![NodeOrToken::Node(struct_kw), NodeOrToken::Node(lbrace)];
-      children.extend(fields);
-      children.push(NodeOrToken::Node(rbrace));
+      let field_list = GreenNode::new(SyntaxKind::StructFieldList.into(), fields);
 
-      GreenNode::new(SyntaxKind::StructDef.into(), children)
+      GreenNode::new(
+        SyntaxKind::StructDef.into(),
+        vec![
+          NodeOrToken::Node(struct_kw),
+          NodeOrToken::Node(lbrace),
+          NodeOrToken::Node(field_list),
+          NodeOrToken::Node(rbrace),
+        ],
+      )
     })
 }
 
@@ -679,6 +894,54 @@ fn func<'src>(
           })
         }),
     )
+    .then(
+      whitespace()
+        .then(keyword("uses"))
+        .map(|(ws, _)| {
+          GreenNode::new(
+            SyntaxKind::Punctuation.into(),
+            vec![
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::KwUses.into(), "uses")),
+            ],
+          )
+        })
+        .then(
+          ident()
+            .then(
+              whitespace()
+                .then(just(','))
+                .map(|(ws, _)| {
+                  GreenNode::new(
+                    SyntaxKind::Punctuation.into(),
+                    vec![
+                      NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                      NodeOrToken::Token(GreenToken::new(SyntaxKind::Comma.into(), ",")),
+                    ],
+                  )
+                })
+                .then(ident())
+                .repeated()
+                .collect::<Vec<_>>(),
+            )
+            .map(|(first, rest)| {
+              let mut children = vec![NodeOrToken::Node(first)];
+              for (comma, name) in rest {
+                children.push(NodeOrToken::Node(comma));
+                children.push(NodeOrToken::Node(name));
+              }
+              GreenNode::new(SyntaxKind::UsesList.into(), children)
+            }),
+        )
+        .map(|(uses_kw, list)| {
+          GreenNode::new(
+            SyntaxKind::UsesClause.into(),
+            vec![NodeOrToken::Node(uses_kw), NodeOrToken::Node(list)],
+          )
+        })
+        .or_not()
+        .map(|opt| opt.unwrap_or_else(|| GreenNode::new(SyntaxKind::UsesClause.into(), vec![]))),
+    )
     .then(whitespace().then(just(':')).map(|(ws, _)| {
       GreenNode::new(
         SyntaxKind::Punctuation.into(),
@@ -690,7 +953,10 @@ fn func<'src>(
     }))
     .then(expr)
     .map(
-      |((((((fn_kw, lparen), param_list), rparen), (arrow, return_type)), colon), body)| {
+      |(
+        ((((((fn_kw, lparen), param_list), rparen), (arrow, return_type)), uses_clause), colon),
+        body,
+      )| {
         GreenNode::new(
           SyntaxKind::FnExpr.into(),
           vec![
@@ -700,6 +966,7 @@ fn func<'src>(
             NodeOrToken::Node(rparen),
             NodeOrToken::Node(arrow),
             NodeOrToken::Node(return_type),
+            NodeOrToken::Node(uses_clause),
             NodeOrToken::Node(colon),
             NodeOrToken::Node(body),
           ],
@@ -880,6 +1147,54 @@ fn method_def<'src>(
           })
         }),
     )
+    .then(
+      whitespace()
+        .then(keyword("uses"))
+        .map(|(ws, _)| {
+          GreenNode::new(
+            SyntaxKind::Punctuation.into(),
+            vec![
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::KwUses.into(), "uses")),
+            ],
+          )
+        })
+        .then(
+          ident()
+            .then(
+              whitespace()
+                .then(just(','))
+                .map(|(ws, _)| {
+                  GreenNode::new(
+                    SyntaxKind::Punctuation.into(),
+                    vec![
+                      NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                      NodeOrToken::Token(GreenToken::new(SyntaxKind::Comma.into(), ",")),
+                    ],
+                  )
+                })
+                .then(ident())
+                .repeated()
+                .collect::<Vec<_>>(),
+            )
+            .map(|(first, rest)| {
+              let mut children = vec![NodeOrToken::Node(first)];
+              for (comma, name) in rest {
+                children.push(NodeOrToken::Node(comma));
+                children.push(NodeOrToken::Node(name));
+              }
+              GreenNode::new(SyntaxKind::UsesList.into(), children)
+            }),
+        )
+        .map(|(uses_kw, list)| {
+          GreenNode::new(
+            SyntaxKind::UsesClause.into(),
+            vec![NodeOrToken::Node(uses_kw), NodeOrToken::Node(list)],
+          )
+        })
+        .or_not()
+        .map(|opt| opt.unwrap_or_else(|| GreenNode::new(SyntaxKind::UsesClause.into(), vec![]))),
+    )
     .then(whitespace().then(just(':')).map(|(ws, _)| {
       GreenNode::new(
         SyntaxKind::Punctuation.into(),
@@ -892,7 +1207,10 @@ fn method_def<'src>(
     .then(expr)
     .map(
       |(
-        ((((((def_kw, name), lparen), param_list), rparen), (arrow, return_type)), colon),
+        (
+          ((((((def_kw, name), lparen), param_list), rparen), (arrow, return_type)), uses_clause),
+          colon,
+        ),
         body,
       )| {
         GreenNode::new(
@@ -905,6 +1223,7 @@ fn method_def<'src>(
             NodeOrToken::Node(rparen),
             NodeOrToken::Node(arrow),
             NodeOrToken::Node(return_type),
+            NodeOrToken::Node(uses_clause),
             NodeOrToken::Node(colon),
             NodeOrToken::Node(body),
           ],
@@ -948,6 +1267,8 @@ fn when_clause<'src>(
 fn match_expr<'src>(
   expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
 ) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  let new_expr = new_expr(expr.clone());
+
   let of_branch = whitespace()
     .then(keyword("of"))
     .map(|(ws, _)| {
@@ -959,7 +1280,7 @@ fn match_expr<'src>(
         ],
       )
     })
-    .then(pattern())
+    .then(pattern(expr.clone()))
     .then(when_clause(expr.clone()))
     .then(whitespace().then(just(':')).map(|(ws, _)| {
       GreenNode::new(
@@ -970,7 +1291,12 @@ fn match_expr<'src>(
         ],
       )
     }))
-    .then(choice((let_in(expr.clone()), expr.clone())))
+    .then(choice((
+      let_in(expr.clone()),
+      ref_in(expr.clone()),
+      destructure_in(expr.clone(), new_expr.clone()),
+      expr.clone(),
+    )))
     .map(|((((of_kw, pattern), when_clause), colon), branch_expr)| {
       GreenNode::new(
         SyntaxKind::MatchBranch.into(),
@@ -1050,7 +1376,12 @@ fn match_expr<'src>(
             ],
           )
         }))
-        .then(choice((let_in(expr.clone()), expr.clone())))
+        .then(choice((
+          let_in(expr.clone()),
+          ref_in(expr.clone()),
+          destructure_in(expr.clone(), new_expr.clone()),
+          expr.clone(),
+        )))
         .map(|((else_kw, colon), else_expr)| {
           GreenNode::new(
             SyntaxKind::ElseClause.into(),
@@ -1695,8 +2026,183 @@ fn behavior_def<'src>(
     )
 }
 
-fn pattern<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
-  choice((ident(), int(), float(), string(), bool()))
+fn effect_def<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  whitespace()
+    .then(keyword("effect"))
+    .map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::KwEffect.into(), "effect")),
+        ],
+      )
+    })
+    .then(ident())
+    .then(whitespace().then(just('{')).map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::LBrace.into(), "{")),
+        ],
+      )
+    }))
+    .then(
+      method_def(expr.clone())
+        .repeated()
+        .collect::<Vec<_>>()
+        .map(|methods| {
+          GreenNode::new(
+            SyntaxKind::MethodList.into(),
+            methods
+              .into_iter()
+              .map(NodeOrToken::Node)
+              .collect::<Vec<_>>(),
+          )
+        }),
+    )
+    .then(whitespace().then(just('}')).map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::RBrace.into(), "}")),
+        ],
+      )
+    }))
+    .map(|((((effect_kw, name), lbrace), methods), rbrace)| {
+      GreenNode::new(
+        SyntaxKind::EffectDef.into(),
+        vec![
+          NodeOrToken::Node(effect_kw),
+          NodeOrToken::Node(name),
+          NodeOrToken::Node(lbrace),
+          NodeOrToken::Node(methods),
+          NodeOrToken::Node(rbrace),
+        ],
+      )
+    })
+}
+
+fn destructure_field<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  let binding_kw = choice((
+    whitespace()
+      .then(keyword("let"))
+      .map(|(ws, _)| (ws, SyntaxKind::KwLet, "let")),
+    whitespace()
+      .then(keyword("ref"))
+      .map(|(ws, _)| (ws, SyntaxKind::KwRef, "ref")),
+  ));
+
+  binding_kw
+    .then(ident())
+    .then(whitespace().then(just("<-")).map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::LeftArrow.into(), "<-")),
+        ],
+      )
+    }))
+    .then(expr.clone())
+    .map(|(((kw_tuple, id), arrow), field_expr)| {
+      let (ws, kw_kind, kw_str) = kw_tuple;
+      GreenNode::new(
+        SyntaxKind::DestructureField.into(),
+        vec![
+          NodeOrToken::Node(GreenNode::new(
+            SyntaxKind::Punctuation.into(),
+            vec![
+              NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+              NodeOrToken::Token(GreenToken::new(kw_kind.into(), kw_str)),
+            ],
+          )),
+          NodeOrToken::Node(id),
+          NodeOrToken::Node(arrow),
+          NodeOrToken::Node(field_expr),
+        ],
+      )
+    })
+}
+
+fn destructure_struct<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  whitespace()
+    .then(just('{'))
+    .map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::LBrace.into(), "{")),
+        ],
+      )
+    })
+    .then(
+      destructure_field(expr.clone())
+        .then(
+          whitespace()
+            .then(just(','))
+            .map(|(ws, _)| {
+              GreenNode::new(
+                SyntaxKind::Punctuation.into(),
+                vec![
+                  NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                  NodeOrToken::Token(GreenToken::new(SyntaxKind::Comma.into(), ",")),
+                ],
+              )
+            })
+            .then(destructure_field(expr.clone()))
+            .repeated()
+            .collect::<Vec<_>>(),
+        )
+        .map(|(first, rest)| {
+          let mut children = vec![NodeOrToken::Node(first)];
+          for (comma, field) in rest {
+            children.push(NodeOrToken::Node(comma));
+            children.push(NodeOrToken::Node(field));
+          }
+          GreenNode::new(SyntaxKind::DestructureFieldList.into(), children)
+        }),
+    )
+    .then(whitespace().then(just('}')).map(|(ws, _)| {
+      GreenNode::new(
+        SyntaxKind::Punctuation.into(),
+        vec![
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+          NodeOrToken::Token(GreenToken::new(SyntaxKind::RBrace.into(), "}")),
+        ],
+      )
+    }))
+    .map(|((lbrace, fields), rbrace)| {
+      GreenNode::new(
+        SyntaxKind::DestructureStruct.into(),
+        vec![
+          NodeOrToken::Node(lbrace),
+          NodeOrToken::Node(fields),
+          NodeOrToken::Node(rbrace),
+        ],
+      )
+    })
+}
+
+fn destructure<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  choice((destructure_struct(expr.clone()),))
+}
+
+fn pattern<'src>(
+  expr: impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
+  choice((destructure(expr), ident(), int(), float(), string(), bool()))
 }
 
 pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, char>>> + Clone {
@@ -1709,9 +2215,9 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, c
   let ident = ident();
 
   let expr = recursive(|expr| {
+    let new_expr = new_expr(expr.clone());
     let func = func(expr.clone());
     let match_expr = match_expr(expr.clone());
-    let new_expr = new_expr(expr.clone());
     let atom = choice((
       float,
       int,
@@ -1719,8 +2225,11 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, c
       boot,
       match_expr,
       func,
-      new_expr,
+      new_expr.clone(),
       null,
+      cause_expr(new_expr.clone()),
+      do_then(expr.clone()),
+      qualified_ident(),
       ident.clone(),
     ));
 
@@ -1762,6 +2271,152 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Cst, extra::Err<Rich<'src, c
     let method_call = method_call(expr.clone());
 
     primary.pratt((
+      prefix(
+        9,
+        whitespace
+          .clone()
+          .then(keyword("with"))
+          .map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::KwWith.into(), "with")),
+              ],
+            )
+          })
+          .then(
+            ident
+              .clone()
+              .then(
+                whitespace
+                  .clone()
+                  .then(just(','))
+                  .map(|(ws, _)| {
+                    GreenNode::new(
+                      SyntaxKind::Punctuation.into(),
+                      vec![
+                        NodeOrToken::Token(GreenToken::new(
+                          SyntaxKind::Whitespace.into(),
+                          ws.leak(),
+                        )),
+                        NodeOrToken::Token(GreenToken::new(SyntaxKind::Comma.into(), ",")),
+                      ],
+                    )
+                  })
+                  .then(ident.clone())
+                  .repeated()
+                  .collect::<Vec<_>>(),
+              )
+              .map(|(first, rest)| {
+                let mut children = vec![NodeOrToken::Node(first)];
+                for (comma, name) in rest {
+                  children.push(NodeOrToken::Node(comma));
+                  children.push(NodeOrToken::Node(name));
+                }
+                GreenNode::new(SyntaxKind::EffectNameList.into(), children)
+              }),
+          )
+          .then(whitespace.clone().then(just('=')).map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Eq.into(), "=")),
+              ],
+            )
+          }))
+          .then(whitespace.clone().then(just('{')).map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::LBrace.into(), "{")),
+              ],
+            )
+          }))
+          .then(
+            qualified_ident()
+              .then(whitespace.clone().then(just('=')).map(|(ws, _)| {
+                GreenNode::new(
+                  SyntaxKind::Punctuation.into(),
+                  vec![
+                    NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                    NodeOrToken::Token(GreenToken::new(SyntaxKind::Eq.into(), "=")),
+                  ],
+                )
+              }))
+              .then(expr.clone())
+              .map(|((qualified, eq), value)| {
+                GreenNode::new(
+                  SyntaxKind::OverrideEntry.into(),
+                  vec![
+                    NodeOrToken::Node(qualified),
+                    NodeOrToken::Node(eq),
+                    NodeOrToken::Node(value),
+                  ],
+                )
+              })
+              .separated_by(whitespace.clone().then(just(',')).map(|(ws, _)| {
+                GreenNode::new(
+                  SyntaxKind::Punctuation.into(),
+                  vec![
+                    NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                    NodeOrToken::Token(GreenToken::new(SyntaxKind::Comma.into(), ",")),
+                  ],
+                )
+              }))
+              .allow_trailing()
+              .collect::<Vec<_>>()
+              .map(|items| {
+                let mut children = vec![];
+                for item in items {
+                  children.push(NodeOrToken::Node(item));
+                }
+                GreenNode::new(SyntaxKind::OverrideList.into(), children)
+              }),
+          )
+          .then(whitespace.clone().then(just('}')).map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::RBrace.into(), "}")),
+              ],
+            )
+          }))
+          .then(whitespace.clone().then(keyword("do")).map(|(ws, _)| {
+            GreenNode::new(
+              SyntaxKind::Punctuation.into(),
+              vec![
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::Whitespace.into(), ws.leak())),
+                NodeOrToken::Token(GreenToken::new(SyntaxKind::KwDo.into(), "do")),
+              ],
+            )
+          })),
+        |((((((with_kw, effects), eq), lbrace), overrides), rbrace), do_kw), body, _| {
+          let override_block = GreenNode::new(
+            SyntaxKind::OverrideBlock.into(),
+            vec![
+              NodeOrToken::Node(lbrace),
+              NodeOrToken::Node(overrides),
+              NodeOrToken::Node(rbrace),
+            ],
+          );
+
+          GreenNode::new(
+            SyntaxKind::WithDoExpr.into(),
+            vec![
+              NodeOrToken::Node(with_kw),
+              NodeOrToken::Node(effects),
+              NodeOrToken::Node(eq),
+              NodeOrToken::Node(override_block),
+              NodeOrToken::Node(do_kw),
+              NodeOrToken::Node(body),
+            ],
+          )
+        },
+      ),
       postfix(
         8,
         whitespace
@@ -2189,12 +2844,17 @@ fn top_level_whitespace<'src>()
 
 pub fn top_level_expr<'src>()
 -> impl Parser<'src, &'src str, SyntaxNode, extra::Err<Rich<'src, char>>> {
+  let expr = expr();
+  let new_expr = new_expr(expr.clone());
+
   choice((
     type_decl(),
-    behavior_def(expr()),
-    let_in(expr()),
-    ref_in(expr()),
+    behavior_def(expr.clone()),
+    let_in(expr.clone()),
+    ref_in(expr.clone()),
+    destructure_in(expr.clone(), new_expr),
     top_level_whitespace(),
+    effect_def(expr.clone()),
   ))
   .repeated()
   .at_least(1)

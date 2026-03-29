@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::syntax::SyntaxNode;
 
@@ -23,12 +25,10 @@ pub enum Type {
     source_node: Option<SyntaxNode>,
   },
   Struct {
-    name: String,
     fields: Vec<(String, Type)>,
   },
   Union {
-    name: String,
-    variants: Vec<(String, Vec<Type>)>,
+    constructors: Vec<UnionConstructor>,
   },
   Generic,
   Var(String),
@@ -39,10 +39,33 @@ pub enum Type {
   Error,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FuncType {
   pub params: Vec<Type>,
   pub return_type: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructType {
+  pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnionType {
+  pub constructors: Vec<UnionConstructor>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct UnionConstructor {
+  pub name: String,
+  pub params: Vec<Type>,
+  pub return_types: Vec<Type>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BehaviorType {
+  pub requirements: HashMap<String, Type>,
+  pub methods: HashMap<String, FuncType>,
 }
 
 impl Type {

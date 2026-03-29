@@ -1,11 +1,12 @@
 use crate::{
   ast::{
-    ArgList, AstNode, BinaryExpr, CallExpr, ElseClause, FnExpr, Ident, InExpr, LetExpr, Literal,
-    MatchBranch, MatchBranches, MatchExpr, MethodCall, ParamList, PrefixExpr, TypeApp, TypeExpr,
-    WhenClause,
+    ArgList, AstNode, BehaviorDef, BinaryExpr, CallExpr, ConstructorList, ConstructorParamList,
+    ElseClause, FieldAccess, FnExpr, Ident, InExpr, LetExpr, Literal, MatchBranch, MatchBranches,
+    MatchExpr, MethodCall, MethodList, NewExpr, ParamList, PrefixExpr, RequirementList, StructDef,
+    StructFieldList, TypeApp, TypeDecl, TypeExpr, WhenClause, WithClause, WithExpr,
   },
   syntax::{SyntaxKind, SyntaxNode},
-  types::{FuncType, Type},
+  types::{BehaviorType, FuncType, Type, UnionConstructor},
 };
 use std::collections::HashMap;
 
@@ -15,8 +16,9 @@ pub struct TypeChecker {
   checked_nodes: HashMap<(SyntaxNode, Vec<Type>), Type>,
   in_generic_context: bool,
   current_args: Vec<Type>,
-  behaviors: HashMap<String, Type>,
-  declared_types: HashMap<String, Type>,
+  pub behaviors: HashMap<String, BehaviorType>,
+  pub declared_types: HashMap<String, Type>,
+  behavior_defs: HashMap<String, SyntaxNode>,
 }
 
 impl TypeChecker {
@@ -29,6 +31,7 @@ impl TypeChecker {
       current_args: Vec::new(),
       behaviors: HashMap::new(),
       declared_types: HashMap::new(),
+      behavior_defs: HashMap::new(),
     }
   }
 
@@ -57,6 +60,252 @@ impl TypeChecker {
     self.env.last_mut().unwrap().insert(name.to_string(), node);
   }
 
+  pub fn register_type(&mut self, name: String, ty: Type) {
+    self.declared_types.insert(name, ty);
+  }
+
+  pub fn register_behavior(&mut self, name: String, behavior: BehaviorType) {
+    self.behaviors.insert(name, behavior);
+  }
+
+  pub fn resolve_all_types(&mut self) {
+    let type_names: Vec<String> = self.declared_types.keys().cloned().collect();
+
+    for type_name in type_names {
+      let ty = self.declared_types.get(&type_name).unwrap().clone();
+      let resolved = self.deep_resolve_type(&ty);
+      self.declared_types.insert(type_name, resolved);
+    }
+  }
+
+  fn deep_resolve_type(&self, ty: &Type) -> Type {
+    match ty {
+      Type::Var(name) => self.resolve_type_name(name),
+      Type::Struct { fields } => {
+        let resolved_fields = fields
+          .iter()
+          .map(|(fname, ftype)| (fname.clone(), self.deep_resolve_type(ftype)))
+          .collect();
+        Type::Struct {
+          fields: resolved_fields,
+        }
+      }
+      Type::Ref(inner) => Type::Ref(Box::new(self.deep_resolve_type(inner))),
+      _ => ty.clone(),
+    }
+  }
+  pub fn check_type_decl(&mut self, node: &TypeDecl) {
+    let name_node = node.name();
+    let name = if let Some(ident_node) = name_node.as_node() {
+      if let Some(ident) = Ident::cast(ident_node.clone()) {
+        ident.name().as_token().unwrap().text().to_string()
+      } else {
+        return;
+      }
+    } else {
+      return;
+    };
+
+    let body_node = node.body();
+    let body = body_node.as_node().unwrap();
+
+    if let Some(struct_def) = StructDef::cast(body.clone()) {
+      let fields_node = struct_def.fields();
+      let fields_node = fields_node.as_node().unwrap();
+      let field_list = StructFieldList::cast(fields_node.clone()).unwrap();
+
+      let mut fields = Vec::new();
+      for field in field_list.fields() {
+        let field_name_node = field.name();
+        let field_name_node = field_name_node.as_node().unwrap();
+        let field_name = Ident::cast(field_name_node.clone()).unwrap();
+        let field_name_str = field_name.name().as_token().unwrap().text().to_string();
+
+        let field_type_node = field.value();
+        let field_type_node = field_type_node.as_node().unwrap();
+        let field_type = self.resolve_type_expr(field_type_node);
+
+        fields.push((field_name_str, field_type));
+      }
+
+      self.register_type(name.clone(), Type::Struct { fields });
+    } else if let Some(constructor_list) = ConstructorList::cast(body.clone()) {
+      let mut constructors = Vec::new();
+
+      for ctor in constructor_list.constructors() {
+        let type_ctor_node = ctor.type_constructor();
+        let type_ctor_node = type_ctor_node.as_node().unwrap();
+        let type_ctor = crate::ast::TypeConstructor::cast(type_ctor_node.clone()).unwrap();
+
+        let ctor_name_node = type_ctor.name();
+        let ctor_name_node = ctor_name_node.as_node().unwrap();
+        let ctor_name = Ident::cast(ctor_name_node.clone()).unwrap();
+        let ctor_name_str = ctor_name.name().as_token().unwrap().text().to_string();
+
+        let params_node = type_ctor.params();
+        let params_node = params_node.as_node().unwrap();
+        let param_list = ConstructorParamList::cast(params_node.clone()).unwrap();
+
+        let mut params = Vec::new();
+        for param in param_list.params() {
+          let type_name = param.type_name();
+          let type_name = type_name.as_node().unwrap();
+          let type_name = Ident::cast(type_name.clone()).unwrap();
+          let type_name = type_name.name();
+          let type_name = type_name.as_token().unwrap().text();
+
+          let param_type = self.resolve_type_name(type_name);
+          params.push(param_type);
+        }
+
+        let return_types_node = type_ctor.return_types();
+        let return_types_node = return_types_node.as_node().unwrap();
+        let return_type_list = ConstructorParamList::cast(return_types_node.clone()).unwrap();
+
+        let mut return_types = Vec::new();
+        for return_param in return_type_list.params() {
+          let type_name = return_param.type_name();
+          let type_name = type_name.as_node().unwrap();
+          let type_name = Ident::cast(type_name.clone()).unwrap();
+          let type_name = type_name.name();
+          let type_name = type_name.as_token().unwrap().text();
+
+          let return_type = self.resolve_type_name(type_name);
+          return_types.push(return_type);
+        }
+
+        constructors.push(UnionConstructor {
+          name: ctor_name_str,
+          params,
+          return_types,
+        });
+      }
+
+      self.register_type(name.clone(), Type::Union { constructors });
+    }
+  }
+
+  fn resolve_type_expr(&self, type_expr_node: &SyntaxNode) -> Type {
+    if let Some(type_expr) = TypeExpr::cast(type_expr_node.clone()) {
+      let inner = type_expr.inner_type();
+      if let Some(inner_node) = inner.as_node() {
+        if let Some(type_app) = TypeApp::cast(inner_node.clone()) {
+          let base = type_app.base_type();
+          if let Some(node) = base.as_node() {
+            if let Some(ident) = Ident::cast(node.clone()) {
+              let name = ident.name().as_token().unwrap().text().to_string();
+              return Type::Var(name);
+            }
+          }
+        }
+      }
+    }
+    Type::Generic
+  }
+
+  pub fn check_behavior_def(&mut self, node: &BehaviorDef) {
+    let name_node = node.name();
+    let name = if let Some(ident_node) = name_node.as_node() {
+      if let Some(ident) = Ident::cast(ident_node.clone()) {
+        ident.name().as_token().unwrap().text().to_string()
+      } else {
+        return;
+      }
+    } else {
+      return;
+    };
+
+    let requirements_node = node.requirements();
+    let requirements_node = requirements_node.as_node().unwrap();
+    let requirement_list = RequirementList::cast(requirements_node.clone()).unwrap();
+
+    let mut requirements = HashMap::new();
+    for req in requirement_list.fields() {
+      let req_name_node = req.name();
+      let req_name_node = req_name_node.as_node().unwrap();
+      let req_name = Ident::cast(req_name_node.clone()).unwrap();
+      let req_name_str = req_name.name().as_token().unwrap().text().to_string();
+
+      let req_type_node = req.type_expr();
+      let req_type_node = req_type_node.as_node().unwrap();
+      let req_type = self.parse_type_expr(req_type_node);
+
+      requirements.insert(req_name_str, req_type);
+    }
+
+    let methods_node = node.methods();
+    let methods_node = methods_node.as_node().unwrap();
+    let method_list = MethodList::cast(methods_node.clone()).unwrap();
+
+    let mut methods = HashMap::new();
+    for method in method_list.methods() {
+      let method_name_node = method.name();
+      let method_name_node = method_name_node.as_node().unwrap();
+      let method_name = Ident::cast(method_name_node.clone()).unwrap();
+      let method_name_str = method_name.name().as_token().unwrap().text().to_string();
+
+      let param_list_node = method.param_list();
+      let param_list_node = param_list_node.as_node().unwrap();
+      let param_list = ParamList::cast(param_list_node.clone()).unwrap();
+
+      let mut param_types = Vec::new();
+      for param in param_list.params() {
+        let type_expr_node = param.type_expr();
+        let param_type = if let Some(type_node) = type_expr_node.as_node() {
+          self.parse_type_expr(type_node)
+        } else {
+          Type::Generic
+        };
+        param_types.push(param_type);
+      }
+
+      let declared_return_type_node = method.return_type();
+      let declared_return_type = if let Some(ret_type_node) = declared_return_type_node.as_node() {
+        self.parse_type_expr(ret_type_node)
+      } else {
+        Type::Generic
+      };
+
+      methods.insert(
+        method_name_str,
+        FuncType {
+          params: param_types,
+          return_type: declared_return_type,
+        },
+      );
+    }
+
+    self.register_behavior(
+      name.clone(),
+      BehaviorType {
+        requirements,
+        methods,
+      },
+    );
+    self
+      .behavior_defs
+      .insert(name.clone(), node.syntax().clone());
+  }
+
+  fn resolve_type_name(&self, type_name: &str) -> Type {
+    match type_name {
+      "int32" => Type::Int32,
+      "int64" => Type::Int64,
+      "float32" => Type::Float32,
+      "float64" => Type::Float64,
+      "bool" => Type::Bool,
+      "string" => Type::String,
+      "null" => Type::Null,
+      _ => {
+        if let Some(ty) = self.declared_types.get(type_name) {
+          ty.clone()
+        } else {
+          Type::Generic
+        }
+      }
+    }
+  }
+
   pub fn check(&mut self, node: &SyntaxNode) -> Type {
     if !self.in_generic_context {
       let key = (node.clone(), self.current_args.clone());
@@ -76,6 +325,9 @@ impl TypeChecker {
       Some(AstNode::ParenExpr(node)) => self.check(node.inner().as_node().unwrap()),
       Some(AstNode::PrefixExpr(node)) => self.check_prefix_expr(&node),
       Some(AstNode::MatchExpr(node)) => self.check_match_expr(&node),
+      Some(AstNode::NewExpr(node)) => self.check_new_expr(&node),
+      Some(AstNode::FieldAccess(node)) => self.check_field_access(&node),
+      Some(AstNode::WithExpr(node)) => self.check_with_expr(&node),
       Some(AstNode::Param(_)) => Type::Generic,
       _ => todo!(
         "Finish implementing type checking for type: {:?}",
@@ -107,7 +359,8 @@ impl TypeChecker {
     let name = name.as_token().unwrap().text();
 
     if let Some(def_node) = self.lookup_var(name).cloned() {
-      self.check(&def_node)
+      let ty = self.check(&def_node);
+      ty
     } else {
       Type::Error
     }
@@ -115,7 +368,6 @@ impl TypeChecker {
 
   fn check_let_expr(&mut self, node: &LetExpr) -> Type {
     let is_top_level = self.env.len() == 1;
-
     if !is_top_level {
       self.push_scope();
     }
@@ -133,7 +385,7 @@ impl TypeChecker {
       Type::Null
     } else {
       if is_top_level {
-        panic!("top-level let bindings cannot have 'in' clause");
+        panic!("Top level in expression not allowed");
       }
       let in_expr = InExpr::cast(in_expr.clone()).unwrap();
       self.check(in_expr.expr().as_node().unwrap())
@@ -160,27 +412,13 @@ impl TypeChecker {
             if let Some(ident) = Ident::cast(base_node.clone()) {
               let name = ident.name();
               let type_name = name.as_token().unwrap().text();
-              return match type_name {
-                "int32" => Type::Int32,
-                "float64" => Type::Float64,
-                "bool" => Type::Bool,
-                "string" => Type::String,
-                "null" => Type::Null,
-                _ => Type::Generic,
-              };
+              return self.resolve_type_name(type_name);
             }
           }
         } else if let Some(ident) = Ident::cast(inner_node.clone()) {
           let name = ident.name();
           let type_name = name.as_token().unwrap().text();
-          return match type_name {
-            "int32" => Type::Int32,
-            "float64" => Type::Float64,
-            "bool" => Type::Bool,
-            "string" => Type::String,
-            "null" => Type::Null,
-            _ => Type::Generic,
-          };
+          return self.resolve_type_name(type_name);
         }
       }
     }
@@ -386,20 +624,138 @@ impl TypeChecker {
     let lhs_ty = self.check(lhs);
 
     let method_name_binding = node.method_name();
-    let method_name = method_name_binding.as_token().unwrap().text();
+    let method_name_node = method_name_binding.as_node().unwrap();
+    let method_name_ident = Ident::cast(method_name_node.clone()).unwrap();
+    let method_name = method_name_ident.name();
+    let method_name = method_name.as_token().unwrap().text();
 
     let args_binding = node.args();
     let args_node = args_binding.as_node().unwrap();
     let args_list = ArgList::cast(args_node.clone()).unwrap();
 
-    let mut arg_types = Vec::new();
+    let mut arg_types = vec![lhs_ty.clone()];
+    let mut arg_nodes = vec![lhs.clone()];
+
     for arg in args_list.args() {
       let arg_expr_binding = arg.arg_expr();
       let arg_expr = arg_expr_binding.as_node().unwrap();
       arg_types.push(self.check(arg_expr));
+      arg_nodes.push(arg_expr.clone());
     }
 
-    self.check_method(&lhs_ty, method_name, &arg_types)
+    self.check_method_with_nodes(&lhs_ty, method_name, &arg_types, &arg_nodes)
+  }
+
+  fn check_method_with_nodes(
+    &mut self,
+    ty: &Type,
+    method: &str,
+    args: &[Type],
+    arg_nodes: &[SyntaxNode],
+  ) -> Type {
+    match ty {
+      Type::WithBehavior { behavior_name, .. } => {
+        let Some(behavior) = self.behaviors.get(behavior_name).cloned() else {
+          return Type::Error;
+        };
+
+        let Some(method_sig) = behavior.methods.get(method).cloned() else {
+          return Type::Error;
+        };
+
+        if method_sig.params.len() != args.len() {
+          return Type::Error;
+        }
+
+        for (param_ty, arg_ty) in method_sig.params.iter().zip(args.iter()) {
+          if param_ty != &Type::Generic && arg_ty != &Type::Generic && param_ty != arg_ty {
+            return Type::Error;
+          }
+        }
+
+        if method_sig.return_type != Type::Generic {
+          return method_sig.return_type;
+        }
+
+        let Some(behavior_def_node) = self.behavior_defs.get(behavior_name).cloned() else {
+          return Type::Generic;
+        };
+
+        let behavior_def = BehaviorDef::cast(behavior_def_node).unwrap();
+        let methods_binding = behavior_def.methods();
+        let methods_node = methods_binding.as_node().unwrap();
+        let method_list = MethodList::cast(methods_node.clone()).unwrap();
+
+        for method_def in method_list.methods() {
+          let method_name_binding = method_def.name();
+          let method_name_node = method_name_binding.as_node().unwrap();
+          let method_ident = Ident::cast(method_name_node.clone()).unwrap();
+          let method_name_token = method_ident.name();
+          let method_name_str = method_name_token.as_token().unwrap().text();
+
+          if method_name_str == method {
+            self.push_scope();
+
+            let param_list_binding = method_def.param_list();
+            let param_list_node = param_list_binding.as_node().unwrap();
+            let param_list = ParamList::cast(param_list_node.clone()).unwrap();
+
+            for (param, arg_node) in param_list.params().zip(arg_nodes.iter()) {
+              let param_name_binding = param.param_name();
+              let param_name_node = param_name_binding.as_node().unwrap();
+              let param_ident = Ident::cast(param_name_node.clone()).unwrap();
+              let param_name_token = param_ident.name();
+              let param_name = param_name_token.as_token().unwrap().text();
+              self.new_var(param_name, arg_node.clone());
+            }
+
+            let body_binding = method_def.body();
+            let body_node = body_binding.as_node().unwrap();
+            let return_ty = self.check(body_node);
+
+            self.pop_scope();
+            return return_ty;
+          }
+        }
+
+        Type::Generic
+      }
+      _ => self.check_method(ty, method, args),
+    }
+  }
+
+  fn check_method(&self, ty: &Type, method: &str, args: &[Type]) -> Type {
+    match ty {
+      Type::Error => Type::Error,
+      Type::Generic => Type::Generic,
+      Type::Int32 => match method {
+        "+" | "-" | "*" | "/" | "%" if args.len() == 1 && args[0] == Type::Int32 => Type::Int32,
+        "<" | ">" | "<=" | ">=" | "=" | "!=" if args.len() == 1 && args[0] == Type::Int32 => {
+          Type::Bool
+        }
+        "-" if args.is_empty() => Type::Int32,
+        _ => Type::Error,
+      },
+      Type::Float64 => match method {
+        "+" | "-" | "*" | "/" if args.len() == 1 && args[0] == Type::Float64 => Type::Float64,
+        "<" | ">" | "<=" | ">=" | "=" | "!=" if args.len() == 1 && args[0] == Type::Float64 => {
+          Type::Bool
+        }
+        _ => Type::Error,
+      },
+      Type::Bool => match method {
+        "and" | "or" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
+        "=" | "!=" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
+        "not" if args.is_empty() => Type::Bool,
+        _ => Type::Error,
+      },
+      Type::String => match method {
+        "+" if args.len() == 1 && args[0] == Type::String => Type::String,
+        "=" | "!=" if args.len() == 1 && args[0] == Type::String => Type::Bool,
+        _ => Type::Error,
+      },
+      _ => Type::Error,
+    }
   }
 
   fn check_prefix_expr(&mut self, node: &PrefixExpr) -> Type {
@@ -490,37 +846,95 @@ impl TypeChecker {
     }
   }
 
-  fn check_method(&self, ty: &Type, method: &str, args: &[Type]) -> Type {
-    match ty {
-      Type::Error => Type::Error,
-      Type::Generic => Type::Generic,
-      Type::Int32 => match method {
-        "+" | "-" | "*" | "/" | "%" if args.len() == 1 && args[0] == Type::Int32 => Type::Int32,
-        "<" | ">" | "<=" | ">=" | "=" | "!=" if args.len() == 1 && args[0] == Type::Int32 => {
-          Type::Bool
-        }
-        "-" if args.is_empty() => Type::Int32,
-        _ => Type::Error,
-      },
-      Type::Float64 => match method {
-        "+" | "-" | "*" | "/" if args.len() == 1 && args[0] == Type::Float64 => Type::Float64,
-        "<" | ">" | "<=" | ">=" | "=" | "!=" if args.len() == 1 && args[0] == Type::Float64 => {
-          Type::Bool
-        }
-        _ => Type::Error,
-      },
-      Type::Bool => match method {
-        "and" | "or" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
-        "=" | "!=" if args.len() == 1 && args[0] == Type::Bool => Type::Bool,
-        "not" if args.is_empty() => Type::Bool,
-        _ => Type::Error,
-      },
-      Type::String => match method {
-        "+" if args.len() == 1 && args[0] == Type::String => Type::String,
-        "=" | "!=" if args.len() == 1 && args[0] == Type::String => Type::Bool,
-        _ => Type::Error,
-      },
-      _ => Type::Error,
+  fn check_with_expr(&mut self, node: &WithExpr) -> Type {
+    let lhs_ty = self.check(node.lhs().as_node().unwrap());
+
+    let with_clause = node.with_clause();
+    let with_clause = with_clause.as_node().unwrap();
+    let with_clause = WithClause::cast(with_clause.clone()).unwrap();
+    let behavior_node = with_clause.behavior();
+    let behavior_node = behavior_node.as_node().unwrap();
+    let behavior_ident = Ident::cast(behavior_node.clone()).unwrap();
+    let behavior_name_token = behavior_ident.name();
+    let behavior_name = behavior_name_token.as_token().unwrap().text();
+
+    if let Some(behavior) = self.behaviors.get(behavior_name) {
+      if self.type_satisfies_requirements(&lhs_ty, &behavior.requirements) {
+        return Type::WithBehavior {
+          base_type: Box::new(lhs_ty),
+          behavior_name: behavior_name.to_string(),
+        };
+      }
     }
+    Type::Error
+  }
+
+  fn type_satisfies_requirements(&self, ty: &Type, requirements: &HashMap<String, Type>) -> bool {
+    let struct_ty = match ty {
+      Type::Struct { fields, .. } => fields,
+      Type::WithBehavior { base_type, .. } => {
+        if let Type::Struct { fields, .. } = base_type.as_ref() {
+          fields
+        } else {
+          return false;
+        }
+      }
+      _ => return false,
+    };
+
+    for (req_field, req_type) in requirements {
+      let has_field = struct_ty
+        .iter()
+        .any(|(fname, ftype)| fname == req_field && ftype == req_type);
+      if !has_field {
+        return false;
+      }
+    }
+    true
+  }
+
+  fn check_new_expr(&mut self, node: &NewExpr) -> Type {
+    let struct_name = node.struct_name();
+    let struct_name = struct_name.as_node().unwrap();
+    let struct_name = Ident::cast(struct_name.clone()).unwrap();
+    let struct_name = struct_name.name();
+    let struct_name = struct_name.as_token().unwrap().text();
+
+    if let Some(ty) = self.declared_types.get(struct_name) {
+      return ty.clone();
+    }
+    Type::Error
+  }
+
+  fn check_field_access(&mut self, node: &FieldAccess) -> Type {
+    let struct_ty = self.check(node.structure().as_node().unwrap());
+    let field_node = node.field();
+    let field_node = field_node.as_node().unwrap();
+    let field_ident = Ident::cast(field_node.clone()).unwrap();
+    let field_name = field_ident.name();
+    let field_name = field_name.as_token().unwrap().text();
+
+    let base_struct = match struct_ty {
+      Type::Struct { fields, .. } => fields,
+      Type::WithBehavior { base_type, .. } => match base_type.as_ref() {
+        Type::Struct { fields, .. } => fields.clone(),
+        Type::WithBehavior {
+          base_type: inner_base,
+          ..
+        } => match inner_base.as_ref() {
+          Type::Struct { fields, .. } => fields.clone(),
+          _ => return Type::Error,
+        },
+        _ => return Type::Error,
+      },
+      _ => return Type::Error,
+    };
+
+    for (fname, ftype) in base_struct {
+      if fname == field_name {
+        return ftype;
+      }
+    }
+    Type::Error
   }
 }

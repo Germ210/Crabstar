@@ -1,17 +1,14 @@
-# Rust/Cargo
 target/
+testing/
 **/*.rs.bk
 
-# Cargo package files
 Cargo.lock
 
-# Executables
 *.exe
 *.dll
 *.so
 *.dylib
 
-# Editor/IDE files
 .vscode/
 .idea/
 *.swp
@@ -19,15 +16,11 @@ Cargo.lock
 *.sublime-workspace
 *.sublime-project
 
-# Logs and temp files
 *.log
 *.tmp
 *.temp
 
-# OS-specific
 .DS_Store
 Thumbs.db
 
-# Git LFS placeholder (if you ever need it)
 *.psd filter=lfs diff=lfs merge=lfs -text
-

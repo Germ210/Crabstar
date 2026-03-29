@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum AbiType {
   Void,
   Int,

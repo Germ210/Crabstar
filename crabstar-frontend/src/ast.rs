@@ -84,6 +84,16 @@ make_ast!(RefBindingExpr {
   in_expr
 });
 
+make_ast!(DestructureExpr {
+  pattern,
+  arrow,
+  type_expr,
+  colon,
+  expr,
+  else_clause,
+  in_expr
+});
+
 make_ast!(FieldAccess {
   structure,
   dot,
@@ -213,6 +223,34 @@ make_ast!(TypeDecl {
   body
 });
 
+make_ast!(StructDef {
+  struct_keyword,
+  lbrace,
+  fields,
+  rbrace
+});
+
+make_ast!(StructField {
+  whitespace,
+  name,
+  eq,
+  value
+});
+
+pub struct StructFieldList(SyntaxNode);
+impl StructFieldList {
+  pub fn cast(node: SyntaxNode) -> Option<Self> {
+    if node.kind() == SyntaxKind::StructFieldList {
+      Some(Self(node))
+    } else {
+      None
+    }
+  }
+  pub fn fields(&self) -> impl Iterator<Item = StructField> + '_ {
+    self.0.children().filter_map(StructField::cast)
+  }
+}
+
 make_ast!(TypeParam { comma, name });
 
 pub struct TypeParamList(SyntaxNode);
@@ -304,7 +342,13 @@ impl RequirementList {
   }
 }
 
-make_ast!(RequirementField { comma, inner });
+make_ast!(RequirementField {
+  comma,
+  whitespace,
+  name,
+  eq,
+  type_expr
+});
 
 pub struct MethodList(SyntaxNode);
 impl MethodList {
@@ -379,13 +423,45 @@ impl ParamList {
   }
 }
 
+make_ast!(DestructureField {
+  binding_keyword,
+  name,
+  left_arrow,
+  field_expr
+});
+
+pub struct DestructureFieldList(SyntaxNode);
+impl DestructureFieldList {
+  pub fn cast(node: SyntaxNode) -> Option<Self> {
+    if node.kind() == SyntaxKind::DestructureFieldList {
+      Some(Self(node))
+    } else {
+      None
+    }
+  }
+  pub fn fields(&self) -> impl Iterator<Item = DestructureField> + '_ {
+    self.0.children().filter_map(DestructureField::cast)
+  }
+}
+
+make_ast!(DestructureStruct {
+  lbrace,
+  fields,
+  rbrace
+});
+
+make_ast!(CauseExpr {
+  cause_keyword,
+  exception_expr
+});
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNode {
   Literal(Literal),
   Ident(Ident),
-
   LetExpr(LetExpr),
   RefBindingExpr(RefBindingExpr),
+  DestructureExpr(DestructureExpr),
   FieldAccess(FieldAccess),
   MethodCall(MethodCall),
   FnExpr(FnExpr),
@@ -401,6 +477,9 @@ pub enum AstNode {
   TypeApp(TypeApp),
   RefType(RefType),
   TypeDecl(TypeDecl),
+
+  StructDef(StructDef),
+  StructField(StructField),
 
   BehaviorDef(BehaviorDef),
   MethodDef(MethodDef),
@@ -419,6 +498,9 @@ pub enum AstNode {
   InExpr(InExpr),
   ElseClause(ElseClause),
   WithClause(WithClause),
+  DestructureField(DestructureField),
+  DestructureStruct(DestructureStruct),
+  CauseExpr(CauseExpr),
 }
 
 impl AstNode {
@@ -428,6 +510,7 @@ impl AstNode {
       SyntaxKind::Ident => Some(AstNode::Ident(Ident::cast(syntax)?)),
       SyntaxKind::LetExpr => Some(AstNode::LetExpr(LetExpr::cast(syntax)?)),
       SyntaxKind::RefBindingExpr => Some(AstNode::RefBindingExpr(RefBindingExpr::cast(syntax)?)),
+      SyntaxKind::DestructureExpr => Some(AstNode::DestructureExpr(DestructureExpr::cast(syntax)?)),
       SyntaxKind::FieldAccess => Some(AstNode::FieldAccess(FieldAccess::cast(syntax)?)),
       SyntaxKind::MethodCall => Some(AstNode::MethodCall(MethodCall::cast(syntax)?)),
       SyntaxKind::FnExpr => Some(AstNode::FnExpr(FnExpr::cast(syntax)?)),
@@ -442,6 +525,8 @@ impl AstNode {
       SyntaxKind::TypeApp => Some(AstNode::TypeApp(TypeApp::cast(syntax)?)),
       SyntaxKind::RefType => Some(AstNode::RefType(RefType::cast(syntax)?)),
       SyntaxKind::TypeDecl => Some(AstNode::TypeDecl(TypeDecl::cast(syntax)?)),
+      SyntaxKind::StructDef => Some(AstNode::StructDef(StructDef::cast(syntax)?)),
+      SyntaxKind::StructField => Some(AstNode::StructField(StructField::cast(syntax)?)),
       SyntaxKind::BehaviorDef => Some(AstNode::BehaviorDef(BehaviorDef::cast(syntax)?)),
       SyntaxKind::MethodDef => Some(AstNode::MethodDef(MethodDef::cast(syntax)?)),
       SyntaxKind::MatchBranch => Some(AstNode::MatchBranch(MatchBranch::cast(syntax)?)),
@@ -461,6 +546,13 @@ impl AstNode {
       SyntaxKind::InExpr => Some(AstNode::InExpr(InExpr::cast(syntax)?)),
       SyntaxKind::ElseClause => Some(AstNode::ElseClause(ElseClause::cast(syntax)?)),
       SyntaxKind::WithClause => Some(AstNode::WithClause(WithClause::cast(syntax)?)),
+      SyntaxKind::DestructureField => {
+        Some(AstNode::DestructureField(DestructureField::cast(syntax)?))
+      }
+      SyntaxKind::DestructureStruct => {
+        Some(AstNode::DestructureStruct(DestructureStruct::cast(syntax)?))
+      }
+      SyntaxKind::CauseExpr => Some(AstNode::CauseExpr(CauseExpr::cast(syntax)?)),
       _ => None,
     }
   }
@@ -471,6 +563,7 @@ impl AstNode {
       AstNode::Ident(n) => n.syntax(),
       AstNode::LetExpr(n) => n.syntax(),
       AstNode::RefBindingExpr(n) => n.syntax(),
+      AstNode::DestructureExpr(n) => n.syntax(),
       AstNode::FieldAccess(n) => n.syntax(),
       AstNode::MethodCall(n) => n.syntax(),
       AstNode::FnExpr(n) => n.syntax(),
@@ -485,6 +578,8 @@ impl AstNode {
       AstNode::TypeApp(n) => n.syntax(),
       AstNode::RefType(n) => n.syntax(),
       AstNode::TypeDecl(n) => n.syntax(),
+      AstNode::StructDef(n) => n.syntax(),
+      AstNode::StructField(n) => n.syntax(),
       AstNode::BehaviorDef(n) => n.syntax(),
       AstNode::MethodDef(n) => n.syntax(),
       AstNode::MatchBranch(n) => n.syntax(),
@@ -500,6 +595,9 @@ impl AstNode {
       AstNode::InExpr(n) => n.syntax(),
       AstNode::ElseClause(n) => n.syntax(),
       AstNode::WithClause(n) => n.syntax(),
+      AstNode::DestructureField(n) => n.syntax(),
+      AstNode::DestructureStruct(n) => n.syntax(),
+      AstNode::CauseExpr(n) => n.syntax(),
     }
   }
 
@@ -508,6 +606,7 @@ impl AstNode {
       self,
       AstNode::LetExpr(_)
         | AstNode::RefBindingExpr(_)
+        | AstNode::DestructureExpr(_)
         | AstNode::FieldAccess(_)
         | AstNode::MethodCall(_)
         | AstNode::FnExpr(_)
@@ -520,6 +619,7 @@ impl AstNode {
         | AstNode::NewExpr(_)
         | AstNode::Literal(_)
         | AstNode::Ident(_)
+        | AstNode::CauseExpr(_)
     )
   }
 

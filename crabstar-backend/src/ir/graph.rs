@@ -9,7 +9,8 @@ pub struct Val(pub u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MemToken(pub u32);
-#[derive(Clone, Debug, Copy, PartialEq)]
+
+#[derive(Clone, Debug, Copy, PartialEq, Hash, Eq)]
 pub enum IntSize {
   I8,
   I16,
@@ -21,7 +22,7 @@ pub enum IntSize {
   U64,
 }
 
-#[derive(Clone, Debug, Copy, PartialEq)]
+#[derive(Clone, Debug, Copy, PartialEq, Hash, Eq)]
 pub enum FloatSize {
   F32,
   F64,
