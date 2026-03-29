@@ -1,5 +1,5 @@
-use crate::abi::types::AbiType;
-use crate::ir::graph::{Block, Cfg, Instr, Jump, Operand, Param, Terminator, Val};
+use crate::abi::types::{AbiType, CallingConvention};
+use crate::ir::graph::{Block, Cfg, Instr, IntSize, Jump, Operand, Param, Terminator, Val};
 use std::collections::HashSet;
 
 pub struct FunctionBuilder {
@@ -36,22 +36,50 @@ fn collect_operand_vals(op: &Operand, out: &mut HashSet<Val>) {
 
 fn collect_instr_vals(instr: &Instr, out: &mut HashSet<Val>) {
   match instr {
-    Instr::Add(a, b)
-    | Instr::Sub(a, b)
-    | Instr::Mul(a, b)
-    | Instr::Div(a, b)
-    | Instr::Eq(a, b)
-    | Instr::Ne(a, b)
-    | Instr::Lt(a, b)
-    | Instr::Le(a, b)
-    | Instr::Gt(a, b)
-    | Instr::Ge(a, b) => {
+    Instr::IAdd(_, a, b)
+    | Instr::ISub(_, a, b)
+    | Instr::IMul(_, a, b)
+    | Instr::IDiv(_, a, b)
+    | Instr::IEq(_, a, b)
+    | Instr::INe(_, a, b)
+    | Instr::ILt(_, a, b)
+    | Instr::ILe(_, a, b)
+    | Instr::IGt(_, a, b)
+    | Instr::IShl(_, a, b)
+    | Instr::IShr(_, a, b)
+    | Instr::IGe(_, a, b)
+    | Instr::FAdd(_, a, b)
+    | Instr::FSub(_, a, b)
+    | Instr::FMul(_, a, b)
+    | Instr::FDiv(_, a, b)
+    | Instr::FEq(_, a, b)
+    | Instr::FNe(_, a, b)
+    | Instr::FLt(_, a, b)
+    | Instr::FLe(_, a, b)
+    | Instr::FGt(_, a, b)
+    | Instr::FGe(_, a, b) => {
       collect_operand_vals(a, out);
       collect_operand_vals(b, out);
     }
-    Instr::Not(a) | Instr::Neg(a) => collect_operand_vals(a, out),
+    Instr::INot(_, a) | Instr::INeg(_, a) | Instr::FNeg(_, a) => collect_operand_vals(a, out),
     Instr::Call(_, args) => args.iter().for_each(|a| collect_operand_vals(a, out)),
-    Instr::Const(_) => {}
+    Instr::Load { ptr, mem, .. } => {
+      collect_operand_vals(ptr, out);
+      if let Operand::Mem(m) = &Operand::Mem(*mem) {
+        out.insert(Val(m.0));
+      }
+    }
+    Instr::Store {
+      ptr, value, mem, ..
+    } => {
+      collect_operand_vals(ptr, out);
+      collect_operand_vals(value, out);
+      if let Operand::Mem(m) = &Operand::Mem(*mem) {
+        out.insert(Val(m.0));
+      }
+    }
+    Instr::FieldPtr { base, .. } => collect_operand_vals(base, out),
+    Instr::IConst(_, _) | Instr::FConst(_, _) | Instr::StackAlloc { .. } => {}
   }
 }
 
@@ -159,43 +187,43 @@ impl FunctionBuilder {
   }
 
   pub fn add(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Add(a, b))
+    self.emit_instr(Instr::IAdd(IntSize::I64, a, b))
   }
   pub fn sub(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Sub(a, b))
+    self.emit_instr(Instr::ISub(IntSize::I64, a, b))
   }
   pub fn mul(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Mul(a, b))
+    self.emit_instr(Instr::IMul(IntSize::I64, a, b))
   }
   pub fn div(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Div(a, b))
+    self.emit_instr(Instr::IDiv(IntSize::I64, a, b))
   }
   pub fn eq(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Eq(a, b))
+    self.emit_instr(Instr::IEq(IntSize::I64, a, b))
   }
   pub fn ne(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Ne(a, b))
+    self.emit_instr(Instr::INe(IntSize::I64, a, b))
   }
   pub fn lt(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Lt(a, b))
+    self.emit_instr(Instr::ILt(IntSize::I64, a, b))
   }
   pub fn le(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Le(a, b))
+    self.emit_instr(Instr::ILe(IntSize::I64, a, b))
   }
   pub fn gt(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Gt(a, b))
+    self.emit_instr(Instr::IGt(IntSize::I64, a, b))
   }
   pub fn ge(&mut self, a: Operand, b: Operand) -> Operand {
-    self.emit_instr(Instr::Ge(a, b))
+    self.emit_instr(Instr::IGe(IntSize::I64, a, b))
   }
   pub fn not(&mut self, a: Operand) -> Operand {
-    self.emit_instr(Instr::Not(a))
+    self.emit_instr(Instr::INot(IntSize::I64, a))
   }
   pub fn neg(&mut self, a: Operand) -> Operand {
-    self.emit_instr(Instr::Neg(a))
+    self.emit_instr(Instr::INeg(IntSize::I64, a))
   }
   pub fn iconst(&mut self, i: i64) -> Operand {
-    self.emit_instr(Instr::Const(i))
+    self.emit_instr(Instr::IConst(IntSize::I64, i))
   }
   pub fn call(&mut self, name: &str, args: Vec<Operand>) -> Operand {
     self.emit_instr(Instr::Call(name.to_string(), args))
@@ -284,17 +312,63 @@ impl FunctionBuilder {
     current.terminator = Some(Terminator::Return(Some(val)));
   }
 
-  pub fn finish(self) -> Cfg {
+  pub fn finish(&self) -> Cfg {
+    let blocks = self.blocks.iter().clone();
     Cfg {
-      blocks: self
-        .blocks
-        .into_iter()
+      blocks: blocks
         .map(|b| Block {
-          params: b.params,
-          instr: b.instr,
-          terminator: b.terminator.expect("block missing terminator"),
+          params: b.params.clone(),
+          instr: b.instr.clone(),
+          terminator: b.terminator.clone().expect("block missing terminator"),
         })
         .collect(),
     }
+  }
+
+  pub fn finish_with_ffi<Abi: CallingConvention<Abi = Abi>>(
+    &self,
+    abi: Abi,
+  ) -> (Cfg, crate::abi::types::FfiCif<Abi>)
+  where
+    <Abi as CallingConvention>::CifData: Default,
+  {
+    let cfg = self.finish();
+    let param_types: Vec<crate::abi::types::AbiType> = cfg
+      .blocks
+      .first()
+      .map(|b| b.params.iter().map(|p| p.ty.clone()).collect())
+      .unwrap_or_default();
+    let ret_abi = cfg
+      .blocks
+      .last()
+      .and_then(|b| match &b.terminator {
+        crate::ir::graph::Terminator::Return(Some(Operand::Val(v))) => cfg
+          .blocks
+          .iter()
+          .flat_map(|blk| blk.params.iter())
+          .find(|p| p.val == *v)
+          .map(|p| p.ty.clone()),
+        crate::ir::graph::Terminator::Return(None) => Some(crate::abi::types::AbiType::Void),
+        _ => Some(crate::abi::types::AbiType::Void),
+      })
+      .unwrap_or(crate::abi::types::AbiType::Void);
+    let ffi_params: Vec<crate::abi::types::FfiType> = param_types
+      .iter()
+      .map(|ty| crate::abi::types::FfiType {
+        size: 8,
+        alignment: 8,
+        ty: ty.clone(),
+        elements: vec![],
+      })
+      .collect();
+    let ffi_ret = crate::abi::types::FfiType {
+      size: 8,
+      alignment: 8,
+      ty: ret_abi,
+      elements: vec![],
+    };
+    let mut cif = crate::abi::types::FfiCif::new(abi, ffi_params, ffi_ret, Default::default());
+    Abi::prep(&mut cif);
+    (cfg, cif)
   }
 }

@@ -96,7 +96,7 @@ pub fn generate_code<C: Codegen>(cfg: &Cfg, cif: &FfiCif<C>, fn_name: &str) -> V
       for (i, op) in operands.iter().enumerate() {
         let v = match op {
           Operand::Val(v) => v,
-          Operand::Imm(_) => continue,
+          _ => continue,
         };
         if let Some(RegConstraint::Fixed(r)) = constraints.operand_constraints.get(i) {
           let current = state.reg_of(*v);
@@ -187,7 +187,7 @@ pub fn generate_code<C: Codegen>(cfg: &Cfg, cif: &FfiCif<C>, fn_name: &str) -> V
           .iter()
           .map(|op| match op {
             Operand::Val(v) => state.reg_of(*v),
-            Operand::Imm(_) => C::caller_saved()[0],
+            _ => C::caller_saved()[0],
           })
           .collect();
         if !block_param_regs.contains_key(&j.target) {
@@ -205,7 +205,7 @@ pub fn generate_code<C: Codegen>(cfg: &Cfg, cif: &FfiCif<C>, fn_name: &str) -> V
             .iter()
             .map(|op| match op {
               Operand::Val(v) => state.reg_of(*v),
-              Operand::Imm(_) => C::caller_saved()[0],
+              _ => C::caller_saved()[0],
             })
             .collect();
           block_param_regs.insert(then_jump.target, regs);
@@ -216,7 +216,7 @@ pub fn generate_code<C: Codegen>(cfg: &Cfg, cif: &FfiCif<C>, fn_name: &str) -> V
             .iter()
             .map(|op| match op {
               Operand::Val(v) => state.reg_of(*v),
-              Operand::Imm(_) => C::caller_saved()[0],
+              _ => C::caller_saved()[0],
             })
             .collect();
           block_param_regs.insert(else_jump.target, regs);

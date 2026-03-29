@@ -29,7 +29,7 @@ impl<R: RegSet> AllocState<R> {
       self.assignments.insert(val, reg);
       reg
     } else {
-      panic!("spill needed for {:?} — not yet implemented", val);
+      panic!("spill needed for {:?} — todo", val);
     }
   }
 
@@ -150,18 +150,33 @@ pub fn terminator_args(term: &Terminator) -> Vec<Operand> {
 
 pub fn instr_operands(instr: &Instr) -> Vec<Operand> {
   match instr {
-    Instr::Add(a, b)
-    | Instr::Sub(a, b)
-    | Instr::Mul(a, b)
-    | Instr::Div(a, b)
-    | Instr::Eq(a, b)
-    | Instr::Ne(a, b)
-    | Instr::Lt(a, b)
-    | Instr::Le(a, b)
-    | Instr::Gt(a, b)
-    | Instr::Ge(a, b) => vec![a.clone(), b.clone()],
-    Instr::Not(a) | Instr::Neg(a) => vec![a.clone()],
+    Instr::IAdd(_, a, b)
+    | Instr::ISub(_, a, b)
+    | Instr::IMul(_, a, b)
+    | Instr::IDiv(_, a, b)
+    | Instr::IEq(_, a, b)
+    | Instr::INe(_, a, b)
+    | Instr::ILt(_, a, b)
+    | Instr::ILe(_, a, b)
+    | Instr::IGt(_, a, b)
+    | Instr::IGe(_, a, b)
+    | Instr::IShl(_, a, b)
+    | Instr::IShr(_, a, b)
+    | Instr::FAdd(_, a, b)
+    | Instr::FSub(_, a, b)
+    | Instr::FMul(_, a, b)
+    | Instr::FDiv(_, a, b)
+    | Instr::FEq(_, a, b)
+    | Instr::FNe(_, a, b)
+    | Instr::FLt(_, a, b)
+    | Instr::FLe(_, a, b)
+    | Instr::FGt(_, a, b)
+    | Instr::FGe(_, a, b) => vec![a.clone(), b.clone()],
+    Instr::INot(_, a) | Instr::INeg(_, a) | Instr::FNeg(_, a) => vec![a.clone()],
+    Instr::Load { ptr, .. } => vec![ptr.clone()],
+    Instr::Store { ptr, value, .. } => vec![ptr.clone(), value.clone()],
+    Instr::FieldPtr { base, .. } => vec![base.clone()],
     Instr::Call(_, args) => args.clone(),
-    Instr::Const(_) => vec![],
+    Instr::IConst(_, _) | Instr::FConst(_, _) | Instr::StackAlloc { .. } => vec![],
   }
 }

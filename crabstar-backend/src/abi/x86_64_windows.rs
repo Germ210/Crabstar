@@ -3,8 +3,9 @@ use crate::{
   regalloc::x86_64::Win64,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Win64Abi {
+  #[default]
   Win64,
   GnuW64,
 }
@@ -21,8 +22,9 @@ pub enum RetReg {
   Xmm0,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum RetLocation {
+  #[default]
   Rax,
   Xmm0,
   SretRcx,
@@ -56,7 +58,7 @@ pub enum ArgLocation {
   ByRef(IntReg),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Win64CifData {
   pub ret_location: RetLocation,
   pub arg_locations: Vec<ArgLocation>,

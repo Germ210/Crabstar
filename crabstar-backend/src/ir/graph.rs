@@ -7,27 +7,100 @@ use target_lexicon::{Architecture, OperatingSystem, Triple};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Val(pub u32);
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
-pub enum Operand {
-  Val(Val),
-  Imm(i64),
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MemToken(pub u32);
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum IntSize {
+  I8,
+  I16,
+  I32,
+  I64,
+  U8,
+  U16,
+  U32,
+  U64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum FloatSize {
+  F32,
+  F64,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum Operand {
+  Val(Val),
+  I8(i8),
+  I16(i16),
+  I32(i32),
+  I64(i64),
+  U8(u8),
+  U16(u16),
+  U32(u32),
+  U64(u64),
+  F32(f32),
+  F64(f64),
+  Mem(MemToken),
+}
+
+#[derive(Debug, Clone)]
 pub enum Instr {
-  Const(i64),
-  Add(Operand, Operand),
-  Sub(Operand, Operand),
-  Mul(Operand, Operand),
-  Div(Operand, Operand),
-  Eq(Operand, Operand),
-  Ne(Operand, Operand),
-  Lt(Operand, Operand),
-  Le(Operand, Operand),
-  Gt(Operand, Operand),
-  Ge(Operand, Operand),
-  Not(Operand),
-  Neg(Operand),
+  IConst(IntSize, i64),
+  FConst(FloatSize, f64),
+
+  IAdd(IntSize, Operand, Operand),
+  ISub(IntSize, Operand, Operand),
+  IMul(IntSize, Operand, Operand),
+  IDiv(IntSize, Operand, Operand),
+  IShl(IntSize, Operand, Operand),
+  IShr(IntSize, Operand, Operand),
+
+  FAdd(FloatSize, Operand, Operand),
+  FSub(FloatSize, Operand, Operand),
+  FMul(FloatSize, Operand, Operand),
+  FDiv(FloatSize, Operand, Operand),
+
+  IEq(IntSize, Operand, Operand),
+  INe(IntSize, Operand, Operand),
+  ILt(IntSize, Operand, Operand),
+  ILe(IntSize, Operand, Operand),
+  IGt(IntSize, Operand, Operand),
+  IGe(IntSize, Operand, Operand),
+
+  FEq(FloatSize, Operand, Operand),
+  FNe(FloatSize, Operand, Operand),
+  FLt(FloatSize, Operand, Operand),
+  FLe(FloatSize, Operand, Operand),
+  FGt(FloatSize, Operand, Operand),
+  FGe(FloatSize, Operand, Operand),
+
+  INot(IntSize, Operand),
+  INeg(IntSize, Operand),
+  FNeg(FloatSize, Operand),
+
+  StackAlloc {
+    size: usize,
+    align: usize,
+  },
+
+  Load {
+    ptr: Operand,
+    ty: AbiType,
+    mem: MemToken,
+  },
+
+  Store {
+    ptr: Operand,
+    value: Operand,
+    ty: AbiType,
+    mem: MemToken,
+  },
+
+  FieldPtr {
+    base: Operand,
+    offset: usize,
+  },
+
   Call(String, Vec<Operand>),
 }
 

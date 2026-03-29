@@ -21,6 +21,7 @@ pub enum PhysReg {
   R14,
   R15,
 }
+
 impl PhysReg {
   pub fn is_extended(self) -> bool {
     matches!(
@@ -36,6 +37,7 @@ impl PhysReg {
     )
   }
 }
+
 impl fmt::Display for PhysReg {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
@@ -58,6 +60,7 @@ impl fmt::Display for PhysReg {
     }
   }
 }
+
 const SYSV_CALLER_SAVED: &[PhysReg] = &[
   PhysReg::Rax,
   PhysReg::Rcx,
@@ -69,6 +72,7 @@ const SYSV_CALLER_SAVED: &[PhysReg] = &[
   PhysReg::R10,
   PhysReg::R11,
 ];
+
 const SYSV_CALLEE_SAVED: &[PhysReg] = &[
   PhysReg::Rbx,
   PhysReg::Rbp,
@@ -77,6 +81,7 @@ const SYSV_CALLEE_SAVED: &[PhysReg] = &[
   PhysReg::R14,
   PhysReg::R15,
 ];
+
 const WIN64_CALLER_SAVED: &[PhysReg] = &[
   PhysReg::Rax,
   PhysReg::Rcx,
@@ -86,6 +91,7 @@ const WIN64_CALLER_SAVED: &[PhysReg] = &[
   PhysReg::R10,
   PhysReg::R11,
 ];
+
 const WIN64_CALLEE_SAVED: &[PhysReg] = &[
   PhysReg::Rbx,
   PhysReg::Rbp,
@@ -96,9 +102,11 @@ const WIN64_CALLEE_SAVED: &[PhysReg] = &[
   PhysReg::R14,
   PhysReg::R15,
 ];
+
 fn binary_unconstrained() -> InstrConstraints<PhysReg> {
   InstrConstraints::unconstrained(2)
 }
+
 fn mul_constraints() -> InstrConstraints<PhysReg> {
   InstrConstraints {
     operand_constraints: vec![RegConstraint::Any, RegConstraint::Any],
@@ -106,6 +114,7 @@ fn mul_constraints() -> InstrConstraints<PhysReg> {
     clobbers: vec![],
   }
 }
+
 fn div_constraints() -> InstrConstraints<PhysReg> {
   InstrConstraints {
     operand_constraints: vec![RegConstraint::Fixed(PhysReg::Rax), RegConstraint::Any],
@@ -113,25 +122,39 @@ fn div_constraints() -> InstrConstraints<PhysReg> {
     clobbers: vec![PhysReg::Rdx],
   }
 }
+
 fn x64_constraints(instr: &Instr) -> InstrConstraints<PhysReg> {
   match instr {
-    Instr::Mul(_, _) => mul_constraints(),
-    Instr::Div(_, _) => div_constraints(),
-    Instr::Add(_, _)
-    | Instr::Sub(_, _)
-    | Instr::Eq(_, _)
-    | Instr::Ne(_, _)
-    | Instr::Lt(_, _)
-    | Instr::Le(_, _)
-    | Instr::Gt(_, _)
-    | Instr::Ge(_, _) => binary_unconstrained(),
-    Instr::Not(_) | Instr::Neg(_) => InstrConstraints::unconstrained(1),
-    Instr::Const(_) => InstrConstraints::unconstrained(0),
+    Instr::IMul(_, _, _) | Instr::FMul(_, _, _) => mul_constraints(),
+    Instr::IDiv(_, _, _) | Instr::FDiv(_, _, _) => div_constraints(),
+    Instr::IAdd(..)
+    | Instr::ISub(..)
+    | Instr::FAdd(..)
+    | Instr::FSub(..)
+    | Instr::IEq(..)
+    | Instr::INe(..)
+    | Instr::ILt(..)
+    | Instr::ILe(..)
+    | Instr::IGt(..)
+    | Instr::IGe(..)
+    | Instr::FEq(..)
+    | Instr::FNe(..)
+    | Instr::FLt(..)
+    | Instr::FLe(..)
+    | Instr::FGt(..)
+    | Instr::FGe(..) => binary_unconstrained(),
+    Instr::INot(..) | Instr::INeg(..) | Instr::FNeg(..) => InstrConstraints::unconstrained(1),
+    Instr::IConst(..) | Instr::FConst(..) => InstrConstraints::unconstrained(0),
     Instr::Call(_, args) => InstrConstraints::unconstrained(args.len()),
+    _ => InstrConstraints::unconstrained(0),
   }
 }
+
+#[derive(Default)]
 pub struct SysV;
+#[derive(Default)]
 pub struct Win64;
+
 impl RegSet for SysV {
   type Reg = PhysReg;
   fn caller_saved() -> &'static [PhysReg] {

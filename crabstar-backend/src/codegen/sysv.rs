@@ -12,10 +12,11 @@ fn emit_const(buf: &mut Vec<u8>, dst: PhysReg, imm: i64) {
 fn resolve(op: &Operand, buf: &mut Vec<u8>, scratch: PhysReg, state: &AllocState<SysV>) -> PhysReg {
   match op {
     Operand::Val(v) => state.reg_of(*v),
-    Operand::Imm(i) => {
+    Operand::I64(i) => {
       emit_const(buf, scratch, *i);
       scratch
     }
+    _ => scratch,
   }
 }
 
@@ -24,20 +25,20 @@ impl Codegen for SysV {
     let dst = state.reg_of(def);
     let s = PhysReg::R11;
     match instr {
-      Instr::Const(i) => emit_const(buf, dst, *i),
-      Instr::Add(a, b) => {
+      Instr::IConst(_, i) => emit_const(buf, dst, *i),
+      Instr::IAdd(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_add(buf, r0, r1, dst);
       }
-      Instr::Sub(a, b) => {
+      Instr::ISub(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_sub(buf, r0, r1, dst);
       }
-      Instr::Mul(a, b) => {
+      Instr::IMul(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_imul(buf, r0, r1, dst);
       }
-      Instr::Div(_, b) => {
+      Instr::IDiv(_, _, b) => {
         let r1 = resolve(b, buf, s, state);
         if r1 == PhysReg::Rdx {
           emit_mov(buf, PhysReg::Rdx, s);
@@ -46,45 +47,45 @@ impl Codegen for SysV {
           emit_idiv(buf, r1);
         }
       }
-      Instr::Eq(a, b) => {
+      Instr::IEq(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_sete(buf, dst);
       }
-      Instr::Ne(a, b) => {
+      Instr::INe(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_setne(buf, dst);
       }
-      Instr::Lt(a, b) => {
+      Instr::ILt(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_setl(buf, dst);
       }
-      Instr::Le(a, b) => {
+      Instr::ILe(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_setle(buf, dst);
       }
-      Instr::Gt(a, b) => {
+      Instr::IGt(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_setg(buf, dst);
       }
-      Instr::Ge(a, b) => {
+      Instr::IGe(_, a, b) => {
         let (r0, r1) = (resolve(a, buf, s, state), resolve(b, buf, s, state));
         emit_cmp(buf, r0, r1);
         emit_setge(buf, dst);
       }
-      Instr::Not(a) => {
+      Instr::INot(_, a) => {
         let r0 = resolve(a, buf, s, state);
         emit_not(buf, r0, dst);
       }
-      Instr::Neg(a) => {
+      Instr::INeg(_, a) => {
         let r0 = resolve(a, buf, s, state);
         emit_neg(buf, r0, dst);
       }
-      Instr::Call(_, _) => unimplemented!("call"),
+      _ => unimplemented!("instruction not implemented"),
     }
   }
 
@@ -114,10 +115,10 @@ impl Codegen for SysV {
       } => {
         let cond_reg = match cond {
           Operand::Val(v) => state.reg_of(*v),
-          Operand::Imm(_) => unimplemented!(),
+          _ => unimplemented!(),
         };
         let scratch = PhysReg::R11;
-        let zero_reg = resolve(&Operand::Imm(0), buf, scratch, state);
+        let zero_reg = resolve(&Operand::I64(0), buf, scratch, state);
         emit_cmp(buf, cond_reg, zero_reg);
         emit_jne_rel32(buf, 0);
         jump_relocs.push((buf.len() - 4, then_jump.target));
