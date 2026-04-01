@@ -128,6 +128,84 @@ impl FunctionBuilder {
     id
   }
 
+  pub fn create_block(&mut self, param_types: Vec<AbiType>) -> u32 {
+    let params: Vec<Param> = param_types
+      .into_iter()
+      .map(|ty| {
+        let val = self.fresh_val();
+        Param { val, ty }
+      })
+      .collect();
+    self.fresh_block(params)
+  }
+
+  pub fn switch_to_block(&mut self, block: u32) {
+    self.current_block = block;
+  }
+
+  pub fn jump_to(&mut self, target: u32, args: Vec<Operand>) {
+    self.blocks[self.current_block as usize].terminator =
+      Some(Terminator::Jump(Jump { target, args }));
+  }
+
+  pub fn cond_jump_to(
+    &mut self,
+    cond: Operand,
+    then_target: u32,
+    then_args: Vec<Operand>,
+    else_target: u32,
+    else_args: Vec<Operand>,
+  ) {
+    self.blocks[self.current_block as usize].terminator = Some(Terminator::CondJump {
+      cond,
+      then_jump: Jump {
+        target: then_target,
+        args: then_args,
+      },
+      else_jump: Jump {
+        target: else_target,
+        args: else_args,
+      },
+    });
+  }
+
+  pub fn begin_loop(&mut self, initial_vals: Vec<Operand>) -> (u32, Vec<Operand>) {
+    let params: Vec<Param> = initial_vals
+      .iter()
+      .enumerate()
+      .map(|(_, _)| {
+        let val = self.fresh_val();
+        Param {
+          val,
+          ty: AbiType::I64,
+        }
+      })
+      .collect();
+    let header = self.fresh_block(params.clone());
+    self.blocks[self.current_block as usize].terminator = Some(Terminator::Jump(Jump {
+      target: header,
+      args: initial_vals,
+    }));
+    self.current_block = header;
+    let loop_params: Vec<Operand> = params.iter().map(|p| Operand::Val(p.val)).collect();
+    (header, loop_params)
+  }
+
+  pub fn loop_back(&mut self, header: u32, updated_vals: Vec<Operand>) {
+    self.blocks[self.current_block as usize].terminator = Some(Terminator::Jump(Jump {
+      target: header,
+      args: updated_vals,
+    }));
+  }
+
+  pub fn loop_exit(&mut self, exit: u32) {
+    self.blocks[self.current_block as usize].terminator = Some(Terminator::Jump(Jump {
+      target: exit,
+      args: vec![],
+    }));
+    self.current_block = exit;
+  }
+
   fn track_instr_uses(&mut self, instr: &Instr) {
     if let Some(ref mut used) = self.used_outer_vals {
       let mut refs = HashSet::new();
@@ -182,6 +260,13 @@ impl FunctionBuilder {
         self.defined_vals.insert(*v);
       }
     }
+    self.defined_vals.insert(def);
+    Operand::Val(def)
+  }
+
+  pub fn emit_into(&mut self, block: u32, instr: Instr) -> Operand {
+    let def = self.fresh_val();
+    self.blocks[block as usize].instr = Some((def, instr));
     self.defined_vals.insert(def);
     Operand::Val(def)
   }
@@ -310,6 +395,14 @@ impl FunctionBuilder {
   pub fn ret(&mut self, val: Operand) {
     let current = &mut self.blocks[self.current_block as usize];
     current.terminator = Some(Terminator::Return(Some(val)));
+  }
+
+  pub fn jump_to_from(&mut self, from: u32, target: u32, args: Vec<Operand>) {
+    self.blocks[from as usize].terminator = Some(Terminator::Jump(Jump { target, args }));
+  }
+
+  pub fn ret_from(&mut self, from: u32, val: Operand) {
+    self.blocks[from as usize].terminator = Some(Terminator::Return(Some(val)));
   }
 
   pub fn finish(&self) -> Cfg {

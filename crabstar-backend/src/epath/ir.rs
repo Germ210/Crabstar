@@ -17,6 +17,13 @@ impl ExprId {
   }
 }
 
+impl std::ops::Deref for ExprId {
+  type Target = Expr;
+  fn deref(&self) -> &Expr {
+    &self.0
+  }
+}
+
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub struct PathId(pub usize);
 
@@ -133,6 +140,27 @@ impl EPath {
       .or_default()
       .insert(b.clone());
     self.equalities.entry(b).or_default().insert(a);
+  }
+
+  pub fn rewrite_slice(&mut self, slice: PathSlice, new_expr: ExprId) -> PathSlice {
+    let mut new_blocks = self.paths[slice.path.0].blocks.clone();
+    let old_block = new_blocks[slice.start].clone();
+    let new_block = self.blocks.hashcons(Block {
+      params: (*old_block).params.clone(),
+      expr: new_expr,
+    });
+    let old_term = self.block_terminators[&old_block].clone();
+    self.block_terminators.insert(new_block.clone(), old_term);
+    new_blocks[slice.start] = new_block;
+    let new_path_id = self.add_path(Path {
+      blocks: new_blocks,
+      origin: Some(slice.clone()),
+    });
+    PathSlice {
+      path: new_path_id,
+      start: slice.start,
+      end: slice.end,
+    }
   }
 }
 

@@ -10,7 +10,10 @@ pub fn from_cfg(cfg: &Cfg) -> EPath {
 
   for (idx, block) in cfg.blocks.iter().enumerate() {
     for (i, param) in block.params.iter().enumerate() {
-      let expr = epath.expr(Expr::Param(i as u32));
+      let expr = val_map
+        .get(&param.val)
+        .cloned()
+        .unwrap_or_else(|| epath.expr(Expr::Param(i as u32)));
       val_map.insert(param.val, expr);
     }
 
@@ -26,12 +29,19 @@ pub fn from_cfg(cfg: &Cfg) -> EPath {
     let params: Vec<_> = block
       .params
       .iter()
-      .enumerate()
-      .map(|(i, _)| epath.expr(Expr::Param(i as u32)))
+      .map(|p| val_map[&p.val].clone())
       .collect();
 
     let b = epath.block(Block { params, expr });
     idx_to_block.insert(idx as u32, b);
+
+    if let Terminator::Jump(j) = &block.terminator {
+      let target = &cfg.blocks[j.target as usize];
+      for (param, arg) in target.params.iter().zip(j.args.iter()) {
+        let arg_expr = translate_operand(arg, &val_map, &mut epath);
+        val_map.insert(param.val, arg_expr);
+      }
+    }
   }
 
   for (idx, block) in cfg.blocks.iter().enumerate() {
@@ -286,6 +296,7 @@ fn dfs_paths(
   paths: &mut Vec<Path>,
 ) {
   let block_id = idx_to_block[&idx].clone();
+
   if current.contains(&block_id) {
     paths.push(Path {
       blocks: current.clone(),
@@ -293,9 +304,10 @@ fn dfs_paths(
     });
     return;
   }
+
   current.push(block_id.clone());
-  let term = block_terminators[&block_id].clone();
-  match &*term {
+
+  match &*block_terminators[&block_id] {
     crate::epath::ir::Terminator::Return(_) => {
       paths.push(Path {
         blocks: current.clone(),
@@ -330,5 +342,6 @@ fn dfs_paths(
       dfs_paths(idx_to_block, block_terminators, else_idx, current, paths);
     }
   }
+
   current.pop();
 }
