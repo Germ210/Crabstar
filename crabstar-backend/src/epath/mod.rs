@@ -1,6 +1,8 @@
 pub mod ir;
 #[macro_use]
 pub mod rewrite;
+pub mod cost;
+pub mod extractor;
 pub mod translate_cfg;
 
 #[cfg(test)]
@@ -403,5 +405,68 @@ mod tests {
     } else {
       panic!("expected loop");
     }
+  }
+
+  #[test]
+  fn test_extraction() {
+    use crate::epath::{cost::AstSizeCost, extractor::Extractor};
+    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
+    let sum = builder.add(args[0], args[0]);
+    builder.ret(sum);
+    let cfg = builder.finish();
+    let mut epath = from_cfg(&cfg);
+    let mut engine = RewriteEngine::new();
+    engine.add_rule(|expr, slice, epath| {
+      ematch!(&*expr, epath, {
+          IAdd(sz, a, b) if a == b => {
+              let new_expr = build!(epath, IShl(*sz, a.clone(), IConst(*sz, 1)));
+              let new_slice = epath.rewrite_slice(slice.clone(), new_expr);
+              epath.record_eq(slice, new_slice);
+          }
+      })
+    });
+    engine.run(&mut epath);
+    let extractor = Extractor::new(AstSizeCost);
+    let extracted = extractor.extract(&epath);
+    let found_shl = extracted.iter().any(|path| {
+      path
+        .blocks
+        .iter()
+        .any(|block| matches!(&*(**block).expr, Expr::IShl(..)))
+    });
+    assert!(found_shl);
+  }
+
+  #[test]
+  fn test_loop_extraction() {
+    use crate::epath::rewrite::hoist;
+    use crate::epath::{cost::AstSizeCost, extractor::Extractor};
+    let (mut builder, _args) = FunctionBuilder::new(&[AbiType::I64]);
+    let zero = builder.iconst(0);
+    let (header, loop_params) = builder.begin_loop(vec![zero]);
+    let i = loop_params[0];
+    let _invariant = builder.iconst(42);
+    let one = builder.iconst(1);
+    let next_i = builder.add(i, one);
+    builder.loop_back(header, vec![next_i]);
+    let cfg = builder.finish();
+    let mut epath = from_cfg(&cfg);
+    let structure = ControlStructure::from_path(&epath.paths[0], &epath);
+    if let ControlStructure::Loop { header, body } = structure {
+      let invariants = get_invariants(&body, &header);
+      for (inv_block, _) in &invariants {
+        let loop_slice = PathSlice {
+          path: PathId(0),
+          start: 0,
+          end: epath.paths[0].blocks.len(),
+        };
+        let new_slice = hoist(inv_block.clone(), loop_slice.clone(), &mut epath);
+        epath.record_eq(loop_slice, new_slice);
+      }
+    }
+    let extractor = Extractor::new(AstSizeCost);
+    let extracted = extractor.extract(&epath);
+    let first_block = &extracted[0].blocks[0];
+    assert!(matches!(&*(**first_block).expr, Expr::IConst(..)));
   }
 }
