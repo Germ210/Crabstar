@@ -142,16 +142,10 @@ impl EPath {
     self.equalities.entry(b).or_default().insert(a);
   }
 
-  pub fn rewrite_slice(&mut self, slice: PathSlice, new_expr: ExprId) -> PathSlice {
+  pub fn rewrite_slice(&mut self, slice: PathSlice, blocks: Vec<BlockId>) -> PathSlice {
     let mut new_blocks = self.paths[slice.path.0].blocks.clone();
-    let old_block = new_blocks[slice.start].clone();
-    let new_block = self.blocks.hashcons(Block {
-      params: (*old_block).params.clone(),
-      expr: new_expr,
-    });
-    let old_term = self.block_terminators[&old_block].clone();
-    self.block_terminators.insert(new_block.clone(), old_term);
-    new_blocks[slice.start] = new_block;
+    new_blocks.splice(slice.start..slice.end, blocks.iter().cloned());
+    let end = slice.start + blocks.len();
     let new_path_id = self.add_path(Path {
       blocks: new_blocks,
       origin: Some(slice.clone()),
@@ -159,8 +153,19 @@ impl EPath {
     PathSlice {
       path: new_path_id,
       start: slice.start,
-      end: slice.end,
+      end,
     }
+  }
+
+  pub fn rewrite_expr(&mut self, slice: PathSlice, expr: ExprId) -> PathSlice {
+    let old_block = self.paths[slice.path.0].blocks[slice.start].clone();
+    let new_block = self.blocks.hashcons(Block {
+      params: (*old_block).params.clone(),
+      expr,
+    });
+    let old_term = self.block_terminators[&old_block].clone();
+    self.block_terminators.insert(new_block.clone(), old_term);
+    self.rewrite_slice(slice, vec![new_block])
   }
 }
 

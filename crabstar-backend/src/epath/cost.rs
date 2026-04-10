@@ -1,7 +1,9 @@
 use crate::epath::ir::{Block, Expr};
 
+#[derive(Clone)]
 pub struct LoopSymbol(pub usize);
 
+#[derive(Clone)]
 pub enum CostExpr {
   Const(u64),
   Mul(Box<CostExpr>, Box<CostExpr>),
@@ -11,22 +13,30 @@ pub enum CostExpr {
 
 impl CostExpr {
   pub fn dominates(&self, other: &CostExpr) -> bool {
-    match (self, other) {
-      (CostExpr::Const(a), CostExpr::Const(b)) => a <= b,
-      (CostExpr::Const(_), CostExpr::Mul(sym, _)) => {
-        matches!(sym.as_ref(), CostExpr::Symbol(_))
-      }
-      (CostExpr::Mul(_, _), CostExpr::Const(_)) => false,
-      (CostExpr::Mul(s1, a), CostExpr::Mul(s2, b)) => {
-        if let (CostExpr::Symbol(ls1), CostExpr::Symbol(ls2)) = (s1.as_ref(), s2.as_ref()) {
-          if ls1.0 == ls2.0 {
-            return a.dominates(b);
+    match (self.evaluate(), other.evaluate()) {
+      (Some(a), Some(b)) => a <= b,
+      (Some(_), None) => true,
+      (None, Some(_)) => false,
+      (None, None) => match (self, other) {
+        (CostExpr::Mul(s1, a), CostExpr::Mul(s2, b)) => {
+          if let (CostExpr::Symbol(ls1), CostExpr::Symbol(ls2)) = (s1.as_ref(), s2.as_ref()) {
+            if ls1.0 == ls2.0 {
+              return a.dominates(b);
+            }
           }
+          false
         }
-        false
-      }
-      (CostExpr::Add(a1, a2), CostExpr::Add(b1, b2)) => a1.dominates(b1) && a2.dominates(b2),
-      _ => false,
+        _ => false,
+      },
+    }
+  }
+
+  pub fn evaluate(&self) -> Option<u64> {
+    match self {
+      CostExpr::Const(n) => Some(*n),
+      CostExpr::Add(a, b) => Some(a.evaluate()? + b.evaluate()?),
+      CostExpr::Mul(a, b) => Some(a.evaluate()? * b.evaluate()?),
+      CostExpr::Symbol(_) => None,
     }
   }
 }

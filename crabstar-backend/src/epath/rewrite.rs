@@ -34,7 +34,7 @@ macro_rules! smatch {
 }
 
 pub struct RewriteEngine {
-  pub rules: Vec<Box<dyn Fn(&Expr, PathSlice, &mut EPath)>>,
+  pub rules: Vec<Box<dyn Fn(&[BlockId], PathSlice, &mut EPath)>>,
 }
 
 impl RewriteEngine {
@@ -42,7 +42,7 @@ impl RewriteEngine {
     Self { rules: vec![] }
   }
 
-  pub fn add_rule(&mut self, rule: impl Fn(&Expr, PathSlice, &mut EPath) + 'static) {
+  pub fn add_rule(&mut self, rule: impl Fn(&[BlockId], PathSlice, &mut EPath) + 'static) {
     self.rules.push(Box::new(rule));
   }
 
@@ -52,16 +52,15 @@ impl RewriteEngine {
       let path_count = epath.paths.len();
       for path_idx in 0..path_count {
         for block_idx in 0..epath.paths[path_idx].blocks.len() {
-          let block_id = epath.paths[path_idx].blocks[block_idx].clone();
-          let expr = (*block_id).expr.clone();
+          let blocks = epath.paths[path_idx].blocks[block_idx..].to_vec();
           let slice = PathSlice {
             path: PathId(path_idx),
             start: block_idx,
-            end: block_idx + 1,
+            end: epath.paths[path_idx].blocks.len(),
           };
           if !epath.equalities.contains_key(&slice) {
             for rule in &self.rules {
-              rule(&expr, slice.clone(), epath);
+              rule(&blocks, slice.clone(), epath);
             }
           }
         }

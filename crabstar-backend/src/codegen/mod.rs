@@ -67,7 +67,7 @@ pub fn generate_code<C: Codegen>(cfg: &Cfg, cif: &FfiCif<C>, fn_name: &str) -> V
 
     let term_args = terminator_args(&block.terminator);
 
-    for (def, instr) in &block.instr {
+    if let Some((def, instr)) = &block.instr {
       let operands = instr_operands(instr);
       let constraints = C::constraints(instr);
 

@@ -9,6 +9,7 @@ pub mod translate_cfg;
 mod tests {
   use crate::abi::types::AbiType;
   use crate::build;
+  use crate::epath::cost::{Cost, CostExpr};
   use crate::epath::ir::{ExprId, PathId, PathSlice};
   use crate::epath::rewrite::{ControlStructure, RewriteEngine, get_invariants, hoist};
   use crate::epath::translate_cfg::from_cfg;
@@ -191,97 +192,6 @@ mod tests {
   }
 
   #[test]
-  fn test_rewrite_engine() {
-    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
-    let sum = builder.add(args[0], args[0]);
-    builder.ret(sum);
-    let cfg = builder.finish();
-    let mut epath = from_cfg(&cfg);
-    let mut engine = RewriteEngine::new();
-    engine.add_rule(|expr, slice, epath| {
-      ematch!(&*expr, epath, {
-        IAdd(sz, a, b) if a == b => {
-          let new_expr = build!(epath, IShl(*sz, a.clone(), IConst(*sz, 1)));
-          let new_slice = epath.rewrite_slice(slice.clone(), new_expr);
-          epath.record_eq(slice, new_slice);
-        }
-      })
-    });
-    engine.run(&mut epath);
-  }
-
-  #[test]
-  fn test_mul_div_cancel() {
-    use crate::epath::rewrite::RewriteEngine;
-    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
-    let two = builder.iconst(2);
-    let mul = builder.mul(args[0], two);
-    let div = builder.div(mul, two);
-    builder.ret(div);
-    let cfg = builder.finish();
-    let mut epath = from_cfg(&cfg);
-    let mut engine = RewriteEngine::new();
-    engine.add_rule(|expr, slice, epath| {
-      ematch!(expr, epath, {
-        IDiv(_sz, IMul(_sz2, a, b), c) => {
-          if b == c {
-            let new_slice = epath.rewrite_slice(slice.clone(), a.clone());
-            epath.record_eq(slice.clone(), new_slice);
-          }
-        }
-      })
-    });
-    engine.add_rule(|expr, slice, epath| {
-      ematch!(expr, epath, {
-        IDiv(sz, IConst(_, va), IConst(_, vb)) => {
-          let new_expr = build!(epath, IConst(*sz, va / vb));
-          let new_slice = epath.rewrite_slice(slice.clone(), new_expr);
-          epath.record_eq(slice.clone(), new_slice);
-        }
-      })
-    });
-    engine.add_rule(|expr, slice, epath| {
-      ematch!(expr, epath, {
-        IMul(_sz, a, IConst(_, 1)) => {
-          let new_slice = epath.rewrite_slice(slice.clone(), a.clone());
-          epath.record_eq(slice.clone(), new_slice);
-        }
-      })
-    });
-    engine.run(&mut epath);
-
-    let original_slice = epath
-      .equalities
-      .keys()
-      .find(|s| {
-        let block = epath.paths[s.path.0].blocks[s.start].clone();
-        matches!(&*(*block).expr, Expr::IDiv(..))
-      })
-      .unwrap()
-      .clone();
-
-    let rewritten_slice = epath.equalities[&original_slice]
-      .iter()
-      .find(|s| {
-        let block = epath.paths[s.path.0].blocks[s.start].clone();
-        matches!(&*(*block).expr, Expr::Param(_))
-      })
-      .unwrap()
-      .clone();
-
-    let original_block = epath.paths[original_slice.path.0].blocks[original_slice.start].clone();
-    let rewritten_block = epath.paths[rewritten_slice.path.0].blocks[rewritten_slice.start].clone();
-
-    assert!(matches!(&*(*original_block).expr, Expr::IDiv(..)));
-    assert!(matches!(&*(*rewritten_block).expr, Expr::Param(_)));
-    assert_ne!(original_block, rewritten_block);
-
-    let param_expr = (*rewritten_block).expr.clone();
-    let original_param = epath.expr(Expr::Param(0));
-    assert_eq!(param_expr, original_param);
-  }
-
-  #[test]
   fn test_loop_detection() {
     let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
     let (header, _loop_params) = builder.begin_loop(vec![]);
@@ -408,36 +318,6 @@ mod tests {
   }
 
   #[test]
-  fn test_extraction() {
-    use crate::epath::{cost::AstSizeCost, extractor::Extractor};
-    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
-    let sum = builder.add(args[0], args[0]);
-    builder.ret(sum);
-    let cfg = builder.finish();
-    let mut epath = from_cfg(&cfg);
-    let mut engine = RewriteEngine::new();
-    engine.add_rule(|expr, slice, epath| {
-      ematch!(&*expr, epath, {
-          IAdd(sz, a, b) if a == b => {
-              let new_expr = build!(epath, IShl(*sz, a.clone(), IConst(*sz, 1)));
-              let new_slice = epath.rewrite_slice(slice.clone(), new_expr);
-              epath.record_eq(slice, new_slice);
-          }
-      })
-    });
-    engine.run(&mut epath);
-    let extractor = Extractor::new(AstSizeCost);
-    let extracted = extractor.extract(&epath);
-    let found_shl = extracted.iter().any(|path| {
-      path
-        .blocks
-        .iter()
-        .any(|block| matches!(&*(**block).expr, Expr::IShl(..)))
-    });
-    assert!(found_shl);
-  }
-
-  #[test]
   fn test_loop_extraction() {
     use crate::epath::rewrite::hoist;
     use crate::epath::{cost::AstSizeCost, extractor::Extractor};
@@ -468,5 +348,143 @@ mod tests {
     let extracted = extractor.extract(&epath);
     let first_block = &extracted[0].blocks[0];
     assert!(matches!(&*(**first_block).expr, Expr::IConst(..)));
+  }
+
+  #[test]
+  fn test_rewrite_engine() {
+    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
+    let sum = builder.add(args[0], args[0]);
+    builder.ret(sum);
+    let cfg = builder.finish();
+    let mut epath = from_cfg(&cfg);
+    let mut engine = RewriteEngine::new();
+    engine.add_rule(|blocks, slice, epath| {
+      let expr = &(*blocks[0]).expr;
+      ematch!(&**expr, epath, {
+        IAdd(sz, a, b) if a == b => {
+          let new_expr = build!(epath, IShl(*sz, a.clone(), IConst(*sz, 1)));
+          let new_slice = epath.rewrite_expr(slice.clone(), new_expr);
+          epath.record_eq(slice, new_slice);
+        }
+      })
+    });
+    engine.run(&mut epath);
+  }
+
+  #[test]
+  fn test_mul_div_cancel() {
+    use crate::epath::rewrite::RewriteEngine;
+    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
+    let two = builder.iconst(2);
+    let mul = builder.mul(args[0], two);
+    let div = builder.div(mul, two);
+    builder.ret(div);
+    let cfg = builder.finish();
+    let mut epath = from_cfg(&cfg);
+    let mut engine = RewriteEngine::new();
+    engine.add_rule(|blocks, slice, epath| {
+      let expr = &(*blocks[0]).expr;
+      ematch!(&**expr, epath, {
+        IDiv(_sz, IMul(_sz2, a, b), c) => {
+          if b == c {
+            let new_slice = epath.rewrite_expr(slice.clone(), a.clone());
+            epath.record_eq(slice.clone(), new_slice);
+          }
+        }
+      })
+    });
+    engine.add_rule(|blocks, slice, epath| {
+      let expr = &(*blocks[0]).expr;
+      ematch!(&**expr, epath, {
+        IDiv(sz, IConst(_, va), IConst(_, vb)) => {
+          let new_expr = build!(epath, IConst(*sz, va / vb));
+          let new_slice = epath.rewrite_expr(slice.clone(), new_expr);
+          epath.record_eq(slice.clone(), new_slice);
+        }
+      })
+    });
+    engine.add_rule(|blocks, slice, epath| {
+      let expr = &(*blocks[0]).expr;
+      ematch!(&**expr, epath, {
+        IMul(_sz, a, IConst(_, 1)) => {
+          let new_slice = epath.rewrite_expr(slice.clone(), a.clone());
+          epath.record_eq(slice.clone(), new_slice);
+        }
+      })
+    });
+    engine.run(&mut epath);
+
+    let original_slice = epath
+      .equalities
+      .keys()
+      .find(|s| {
+        let block = epath.paths[s.path.0].blocks[s.start].clone();
+        matches!(&*(*block).expr, Expr::IDiv(..))
+      })
+      .unwrap()
+      .clone();
+
+    let rewritten_slice = epath.equalities[&original_slice]
+      .iter()
+      .find(|s| {
+        let block = epath.paths[s.path.0].blocks[s.start].clone();
+        matches!(&*(*block).expr, Expr::Param(_))
+      })
+      .unwrap()
+      .clone();
+
+    let original_block = epath.paths[original_slice.path.0].blocks[original_slice.start].clone();
+    let rewritten_block = epath.paths[rewritten_slice.path.0].blocks[rewritten_slice.start].clone();
+
+    assert!(matches!(&*(*original_block).expr, Expr::IDiv(..)));
+    assert!(matches!(&*(*rewritten_block).expr, Expr::Param(_)));
+    assert_ne!(original_block, rewritten_block);
+
+    let param_expr = (*rewritten_block).expr.clone();
+    let original_param = epath.expr(Expr::Param(0));
+    assert_eq!(param_expr, original_param);
+  }
+
+  #[test]
+  fn test_extraction() {
+    use crate::epath::extractor::Extractor;
+
+    struct TestCost;
+
+    impl Cost for TestCost {
+      fn expr_cost(&self, expr: &Expr) -> CostExpr {
+        match expr {
+          Expr::IShl(_, _, _) => CostExpr::Const(1),
+          _ => CostExpr::Const(5),
+        }
+      }
+    }
+    let (mut builder, args) = FunctionBuilder::new(&[AbiType::I64]);
+    let sum = builder.add(args[0], args[0]);
+    builder.ret(sum);
+    let cfg = builder.finish();
+    let mut epath = from_cfg(&cfg);
+    let mut engine = RewriteEngine::new();
+    engine.add_rule(|blocks, slice, epath| {
+      let expr = &(*blocks[0]).expr;
+      ematch!(&**expr, epath, {
+        IAdd(sz, a, b) if a == b => {
+          let new_expr = build!(epath, IShl(*sz, a.clone(), IConst(*sz, 1)));
+          let new_slice = epath.rewrite_expr(slice.clone(), new_expr);
+          epath.record_eq(slice, new_slice);
+        }
+      })
+    });
+    engine.run(&mut epath);
+    let extractor = Extractor::new(TestCost);
+    let extracted = extractor.extract(&epath);
+
+    let found_shl = extracted.iter().any(|path| {
+      path
+        .blocks
+        .iter()
+        .any(|block| matches!(&*(**block).expr, Expr::IShl(..)))
+    });
+    assert!(found_shl);
   }
 }
