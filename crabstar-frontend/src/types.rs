@@ -1,165 +1,368 @@
-use std::collections::HashMap;
+use slotmap::{SlotMap, new_key_type};
 
-use crate::ast::*;
-use crate::syntax::SyntaxNode;
+new_key_type! { pub struct TypeID; }
+
+pub type VarID = u32;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeVar {
+    pub id: VarID,
+}
+
+impl TypeVar {
+    pub fn new(id: VarID) -> Self {
+        TypeVar { id }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RowVar {
+    pub id: VarID,
+}
+
+impl RowVar {
+    pub fn new(id: VarID) -> Self {
+        RowVar { id }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeCons {
+    pub name: String,
+}
+
+impl TypeCons {
+    pub fn new(name: impl Into<String>) -> Self {
+        TypeCons { name: name.into() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeApp {
+    pub head: TypeID,
+    pub args: Vec<TypeID>,
+}
+
+impl TypeApp {
+    pub fn new(head: TypeID, args: Vec<TypeID>) -> Self {
+        TypeApp { head, args }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Row {
+    pub fields: Vec<(String, TypeID)>,
+    pub rest: Option<TypeID>,
+}
+
+impl Row {
+    pub fn new(fields: Vec<(String, TypeID)>, rest: Option<TypeID>) -> Self {
+        Row { fields, rest }
+    }
+
+    pub fn empty(rest: Option<TypeID>) -> Self {
+        Row {
+            fields: Vec::new(),
+            rest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WithBehavior {
+    pub inner: TypeID,
+    pub behavior: String,
+    pub methods: Row,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Struct {
+    pub fields: Row,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Scheme {
+    pub vars: Vec<VarID>,
+    pub ty: TypeID,
+}
+
+impl Scheme {
+    pub fn mono_type(ty: TypeID) -> Self {
+        Scheme { vars: vec![], ty }
+    }
+
+    pub fn poly_type(vars: Vec<VarID>, ty: TypeID) -> Self {
+        Scheme { vars, ty }
+    }
+
+    pub fn is_mono_type(&self) -> bool {
+        self.vars.is_empty()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
-  Int8,
-  Int16,
-  Int32,
-  Int64,
-  Float32,
-  Float64,
-  Bool,
-  String,
-  Null,
-  Ref(Box<Type>),
-  App {
-    constructor: String,
-    args: Vec<Type>,
-  },
-  Fn {
-    params: Vec<Type>,
-    return_type: Box<Type>,
-    source_node: Option<SyntaxNode>,
-  },
-  Struct {
-    fields: Vec<(String, Type)>,
-  },
-  Union {
-    constructors: Vec<UnionConstructor>,
-  },
-  Generic,
-  Var(String),
-  WithBehavior {
-    base_type: Box<Type>,
-    behavior_name: String,
-  },
-  Error,
+    TypeVar(TypeVar),
+    RowVar(RowVar),
+    TypeCons(TypeCons),
+    TypeApp(TypeApp),
+    Row(Row),
+    WithBehavior(WithBehavior),
+    Struct(Struct),
+    Sum(Row),
+    Scheme(Scheme),
+    Link(TypeID),
+    Error,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct FuncType {
-  pub params: Vec<Type>,
-  pub return_type: Type,
+pub struct TypeArena {
+    pub types: SlotMap<TypeID, Type>,
 }
 
-#[derive(Debug, Clone)]
-pub struct StructType {
-  pub fields: Vec<(String, Type)>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UnionType {
-  pub constructors: Vec<UnionConstructor>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct UnionConstructor {
-  pub name: String,
-  pub params: Vec<Type>,
-  pub return_types: Vec<Type>,
-}
-
-#[derive(Debug, Clone)]
-pub struct BehaviorType {
-  pub requirements: HashMap<String, Type>,
-  pub methods: HashMap<String, FuncType>,
-}
-
-impl Type {
-  pub fn from_type_expr(type_expr: &TypeExpr) -> Self {
-    let inner = type_expr.inner_type();
-    if let Some(node) = inner.as_node() {
-      if let Some(ref_type) = RefType::cast(node.clone()) {
-        let ref_kw = ref_type.ref_keyword();
-        if ref_kw
-          .as_node()
-          .map(|n| n.children().count() > 0)
-          .unwrap_or(false)
-        {
-          let type_app = ref_type.type_app();
-          if let Some(app_node) = type_app.as_node() {
-            if let Some(app) = TypeApp::cast(app_node.clone()) {
-              return Type::Ref(Box::new(Self::from_type_app(&app)));
-            }
-          }
-        } else {
-          let type_app = ref_type.type_app();
-          if let Some(app_node) = type_app.as_node() {
-            if let Some(app) = TypeApp::cast(app_node.clone()) {
-              return Self::from_type_app(&app);
-            }
-          }
+impl TypeArena {
+    pub fn new() -> Self {
+        TypeArena {
+            types: SlotMap::with_key(),
         }
-      } else if let Some(type_app) = TypeApp::cast(node.clone()) {
-        return Self::from_type_app(&type_app);
-      }
     }
-    Type::Generic
-  }
 
-  fn from_type_app(type_app: &TypeApp) -> Self {
-    let base = type_app.base_type();
-    let base_name = if let Some(node) = base.as_node() {
-      if let Some(ident) = Ident::cast(node.clone()) {
-        ident
-          .name()
-          .as_token()
-          .map(|t| t.text().trim().to_string())
-          .unwrap_or_default()
-      } else {
-        String::new()
-      }
-    } else {
-      String::new()
-    };
-    match base_name.as_str() {
-      "int8" => Type::Int8,
-      "int16" => Type::Int16,
-      "int32" => Type::Int32,
-      "int64" => Type::Int64,
-      "float32" => Type::Float32,
-      "float64" => Type::Float64,
-      "bool" => Type::Bool,
-      "string" => Type::String,
-      "null" => Type::Null,
-      _ => {
-        let args_node = type_app.type_args();
-        if let Some(args) = args_node.as_node() {
-          if let Some(arg_list) = TypeArgList::cast(args.clone()) {
-            let type_args: Vec<Type> = arg_list
-              .children()
-              .filter_map(|child| TypeArg::cast(child))
-              .map(|arg| {
-                let te = arg.type_expr();
-                if let Some(te_node) = te.as_node() {
-                  if let Some(type_expr) = TypeExpr::cast(te_node.clone()) {
-                    Type::from_type_expr(&type_expr)
-                  } else {
-                    Type::Generic
-                  }
-                } else {
-                  Type::Generic
-                }
-              })
-              .collect();
-            if type_args.is_empty() {
-              Type::Var(base_name)
+    pub fn alloc(&mut self, ty: Type) -> TypeID {
+        self.types.insert(ty)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct FreshCounters {
+    pub type_var: VarID,
+    pub row_var: VarID,
+}
+
+impl FreshCounters {
+    pub fn new() -> Self {
+        FreshCounters::default()
+    }
+}
+
+pub fn fresh_type_var(arena: &mut TypeArena, counters: &mut FreshCounters) -> TypeID {
+    counters.type_var += 1;
+    arena.alloc(Type::TypeVar(TypeVar::new(counters.type_var)))
+}
+
+pub fn fresh_row_var(arena: &mut TypeArena, counters: &mut FreshCounters) -> TypeID {
+    counters.row_var += 1;
+    arena.alloc(Type::RowVar(RowVar::new(counters.row_var)))
+}
+
+pub fn find_root(arena: &mut TypeArena, id: TypeID) -> TypeID {
+    let mut current = id;
+    while let Some(Type::Link(next)) = arena.types.get(current) {
+        current = *next;
+    }
+    let root = current;
+    current = id;
+    while let Some(Type::Link(next)) = arena.types.get(current) {
+        let temp = *next;
+        if temp == root {
+            break;
+        }
+        arena.types[current] = Type::Link(root);
+        current = temp;
+    }
+    root
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeOption(pub Option<TypeID>);
+
+pub fn int_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("int")))
+}
+
+pub fn int8_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("int8")))
+}
+
+pub fn int16_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("int16")))
+}
+
+pub fn int32_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("int32")))
+}
+
+pub fn int64_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("int64")))
+}
+
+pub fn float_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("float")))
+}
+
+pub fn float32_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("float32")))
+}
+
+pub fn float64_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("float64")))
+}
+
+pub fn bool_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("bool")))
+}
+
+pub fn string_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("String")))
+}
+
+pub fn null_type(arena: &mut TypeArena) -> TypeID {
+    arena.alloc(Type::TypeCons(TypeCons::new("null")))
+}
+
+pub fn ref_type(arena: &mut TypeArena, inner: TypeID) -> TypeID {
+    let cons = arena.alloc(Type::TypeCons(TypeCons::new("ref")));
+    arena.alloc(Type::TypeApp(TypeApp::new(cons, vec![inner])))
+}
+
+pub fn mut_type(arena: &mut TypeArena, inner: TypeID) -> TypeID {
+    let cons = arena.alloc(Type::TypeCons(TypeCons::new("mut")));
+    arena.alloc(Type::TypeApp(TypeApp::new(cons, vec![inner])))
+}
+
+pub fn owned_type(arena: &mut TypeArena, inner: TypeID) -> TypeID {
+    let cons = arena.alloc(Type::TypeCons(TypeCons::new("owned")));
+    arena.alloc(Type::TypeApp(TypeApp::new(cons, vec![inner])))
+}
+
+pub fn fn_type(arena: &mut TypeArena, mut args: Vec<TypeID>, ret: TypeID) -> TypeID {
+    let cons = arena.alloc(Type::TypeCons(TypeCons::new("fn")));
+    args.push(ret);
+    arena.alloc(Type::TypeApp(TypeApp::new(cons, args)))
+}
+
+pub fn array_type(arena: &mut TypeArena, array_type: TypeID) -> TypeID {
+    let cons = arena.alloc(Type::TypeCons(TypeCons::new("array")));
+    arena.alloc(Type::TypeApp(TypeApp::new(cons, vec![array_type])))
+}
+
+fn var_name(
+    id: u32,
+    var_names: &mut std::collections::HashMap<u32, String>,
+    counter: &mut u32,
+) -> String {
+    if let Some(name) = var_names.get(&id) {
+        return name.clone();
+    }
+    let name = format!("'{}", (b'a' + (*counter % 26) as u8) as char);
+    *counter += 1;
+    var_names.insert(id, name.clone());
+    name
+}
+
+pub fn format_type(
+    arena: &mut TypeArena,
+    id: TypeID,
+    var_names: &mut std::collections::HashMap<u32, String>,
+    counter: &mut u32,
+) -> String {
+    let root = find_root(arena, id);
+    let ty = arena.types[root].clone();
+    match ty {
+        Type::TypeVar(v) => var_name(v.id, var_names, counter),
+        Type::RowVar(_) => "...".into(),
+        Type::TypeCons(c) => c.name.clone(),
+        Type::Link(inner) => format_type(arena, inner, var_names, counter),
+        Type::Error => "<error>".to_string(),
+        Type::TypeApp(app) => {
+            let head = format_type(arena, app.head, var_names, counter);
+            if head == "fn" {
+                let args: Vec<_> = app.args[..app.args.len() - 1]
+                    .iter()
+                    .map(|a| format_type(arena, *a, var_names, counter))
+                    .collect();
+                let ret = format_type(arena, *app.args.last().unwrap(), var_names, counter);
+                format!("fn ({}) -> {}", args.join(", "), ret)
             } else {
-              Type::App {
-                constructor: base_name,
-                args: type_args,
-              }
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|a| format_type(arena, *a, var_names, counter))
+                    .collect();
+                if args.len() == 0 {
+                    format!("{}", head)
+                } else {
+                    format!("{}({})", head, args.join(", "))
+                }
             }
-          } else {
-            Type::Var(base_name)
-          }
-        } else {
-          Type::Var(base_name)
         }
-      }
+        Type::Row(row) => {
+            let mut parts: Vec<_> = row
+                .fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", n, format_type(arena, *t, var_names, counter)))
+                .collect();
+            if row.rest.is_some() {
+                parts.push("...".to_string());
+            }
+            format!("{{{}}}", parts.join(", "))
+        }
+        Type::Struct(s) => {
+            let mut parts: Vec<_> = s
+                .fields
+                .fields
+                .iter()
+                .map(|(n, t)| format!("{}: {}", n, format_type(arena, *t, var_names, counter)))
+                .collect();
+            if let Some(rest) = s.fields.rest {
+                parts.push(format!(
+                    "...{}",
+                    format_type(arena, rest, var_names, counter)
+                ));
+            }
+            format!("struct {{{}}}", parts.join(", "))
+        }
+        Type::WithBehavior(wb) => {
+            let inner = format_type(arena, wb.inner, var_names, counter);
+            format!("{} with {}", inner, wb.behavior)
+        }
+        Type::Scheme(scheme) => {
+            let vars: Vec<_> = scheme
+                .vars
+                .iter()
+                .map(|v| var_name(*v, var_names, counter))
+                .collect();
+            let ty = format_type(arena, scheme.ty, var_names, counter);
+            format!("forall {}. {}", vars.join(" "), ty)
+        }
+        Type::Sum(row) => {
+            let fields = row.fields.clone();
+            let has_rest = row.rest.is_some();
+            let parts: Vec<_> = fields
+                .iter()
+                .map(|(n, t)| {
+                    let t_root = find_root(arena, *t);
+                    let t_ty = arena.types[t_root].clone();
+                    match t_ty {
+                        Type::TypeApp(app) if app.args.len() == 1 => {
+                            let arg_root = find_root(arena, app.args[0]);
+                            let arg_ty = arena.types[arg_root].clone();
+                            match arg_ty {
+                                Type::TypeCons(c) if c.name == "null" => n.clone(),
+                                _ => format!(
+                                    "{}({})",
+                                    n,
+                                    format_type(arena, app.args[0], var_names, counter)
+                                ),
+                            }
+                        }
+                        _ => n.clone(),
+                    }
+                })
+                .collect();
+            if has_rest {
+                format!("{} or ...", parts.join(" or "))
+            } else {
+                parts.join(" or ")
+            }
+        }
     }
-  }
 }

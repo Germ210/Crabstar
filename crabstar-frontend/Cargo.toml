@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chumsky = { version = "0.11.2", features = ["pratt"] }
 rowan = "0.16.1"
+slotmap = "1.1.1"

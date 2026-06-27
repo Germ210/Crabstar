@@ -1,632 +1,1056 @@
-use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
-use rowan::NodeOrToken;
+use crate::{
+    syntax::SyntaxKind,
+    types::{FreshCounters, Type, TypeArena, TypeCons, TypeID, fn_type, ref_type},
+};
+use rowan::{SyntaxNode, SyntaxToken};
 
-macro_rules! make_ast {
-  ($name:ident { $($fields:ident),+ $(,)? }) => {
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct $name {
-      syntax: SyntaxNode,
-    }
+type Node = SyntaxNode<crate::syntax::CrabstarLang>;
+type Token = SyntaxToken<crate::syntax::CrabstarLang>;
 
-    impl $name {
-      pub fn syntax(&self) -> &SyntaxNode { &self.syntax }
+fn child_node<N: AstNode>(parent: &Node) -> Option<N> {
+    parent.children().find_map(N::cast)
+}
 
-      pub fn cast(syntax: SyntaxNode) -> Option<Self> {
-        if syntax.kind() == SyntaxKind::$name {
-          Some(Self { syntax })
-        } else {
-          None
+fn nth_child_node<N: AstNode>(parent: &Node, n: usize) -> Option<N> {
+    parent.children().filter_map(N::cast).nth(n)
+}
+
+fn child_token(parent: &Node, kind: SyntaxKind) -> Option<Token> {
+    parent
+        .children_with_tokens()
+        .filter_map(|it| it.into_token())
+        .find(|it| it.kind() == kind)
+}
+
+fn child_nodes<'a, N: AstNode + 'a>(parent: &'a Node) -> impl Iterator<Item = N> + 'a {
+    parent.children().filter_map(N::cast)
+}
+
+pub trait AstNode: Sized {
+    fn cast(node: Node) -> Option<Self>;
+    fn syntax(&self) -> &Node;
+}
+
+macro_rules! ast_node {
+    ($name:ident, $kind:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub struct $name(Node);
+
+        impl AstNode for $name {
+            fn cast(node: Node) -> Option<Self> {
+                if node.kind() == SyntaxKind::$kind {
+                    Some(Self(node))
+                } else {
+                    None
+                }
+            }
+            fn syntax(&self) -> &Node {
+                &self.0
+            }
         }
-      }
-
-      make_ast!(@parse_fields 0; $($fields),+);
-    }
-  };
-
-  (@parse_fields $idx:expr; $head:ident, $($tail:ident),*) => {
-    pub fn $head(&self) -> NodeOrToken<SyntaxNode, SyntaxToken> {
-      self.syntax.children_with_tokens().nth($idx).unwrap()
-    }
-    make_ast!(@parse_fields $idx + 1; $($tail),*);
-  };
-
-  (@parse_fields $idx:expr; $head:ident) => {
-    pub fn $head(&self) -> NodeOrToken<SyntaxNode, SyntaxToken> {
-      self.syntax.children_with_tokens().nth($idx).unwrap()
-    }
-  };
+    };
 }
 
-pub struct Root(SyntaxNode);
+ast_node!(Root, Root);
+
 impl Root {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::Root {
-      Some(Self(node))
-    } else {
-      None
+    pub fn imports(&self) -> impl Iterator<Item = Import> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn children(&self) -> impl Iterator<Item = SyntaxNode> {
-    self.0.children()
-  }
-  pub fn let_exprs(&self) -> impl Iterator<Item = LetExpr> {
-    self.0.children().filter_map(LetExpr::cast)
-  }
-  pub fn type_decls(&self) -> impl Iterator<Item = TypeDecl> {
-    self.0.children().filter_map(TypeDecl::cast)
-  }
+    pub fn exports(&self) -> impl Iterator<Item = Export> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn let_exprs(&self) -> impl Iterator<Item = LetExpr> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn mut_bindings(&self) -> impl Iterator<Item = MutBindingExpr> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn ref_bindings(&self) -> impl Iterator<Item = RefBindingExpr> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn type_decls(&self) -> impl Iterator<Item = TypeDecl> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn effect_defs(&self) -> impl Iterator<Item = EffectDef> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn behavior_defs(&self) -> impl Iterator<Item = BehaviorDef> + '_ {
+        child_nodes(&self.0)
+    }
 }
 
-make_ast!(Literal {
-  whitespace,
-  literal
-});
+ast_node!(Import, Import);
 
-make_ast!(Ident { whitespace, name });
-
-make_ast!(LetExpr {
-  let_kw,
-  name,
-  arrow,
-  type_expr,
-  colon,
-  expr,
-  in_expr
-});
-
-make_ast!(RefBindingExpr {
-  let_kw,
-  name,
-  arrow,
-  type_expr,
-  colon,
-  expr,
-  in_expr
-});
-
-make_ast!(DestructureExpr {
-  pattern,
-  arrow,
-  type_expr,
-  colon,
-  expr,
-  else_clause,
-  in_expr
-});
-
-make_ast!(FieldAccess {
-  structure,
-  dot,
-  field,
-});
-
-make_ast!(MethodCall {
-  lhs,
-  pipe,
-  method_name,
-  lparen,
-  args,
-  rparen
-});
-
-make_ast!(Param {
-  whitespace,
-  param_name,
-  colon,
-  type_expr
-});
-
-make_ast!(FnExpr {
-  fn_kw,
-  lparen,
-  param_list,
-  rparen,
-  arrow,
-  return_type,
-  colon,
-  body
-});
-
-make_ast!(WhenClause {
-  when_kw,
-  guard_clause,
-});
-
-pub struct MatchBranches(SyntaxNode);
-impl MatchBranches {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::MatchBranches {
-      Some(Self(node))
-    } else {
-      None
+impl Import {
+    pub fn path(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::String)
     }
-  }
-  pub fn children(&self) -> impl Iterator<Item = SyntaxNode> {
-    self.0.children()
-  }
+    pub fn with_clause(&self) -> Option<WithClause> {
+        child_node(&self.0)
+    }
 }
 
-make_ast!(MatchBranch {
-  of_kw,
-  pattern,
-  when_clause,
-  colon,
-  expr
-});
+ast_node!(WithClause, WithClause);
 
-make_ast!(MatchExpr {
-  match_kw,
-  discriminant,
-  lbrace,
-  match_branches,
-  rbrace,
-  else_clause
-});
+impl WithClause {
+    pub fn alias_list(&self) -> Option<AliasList> {
+        child_node(&self.0)
+    }
+}
 
-make_ast!(Arg { arg_expr, comma });
+ast_node!(AliasList, AliasList);
 
-pub struct ArgList(SyntaxNode);
+impl AliasList {
+    pub fn aliases(&self) -> impl Iterator<Item = Alias> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(Alias, Alias);
+
+impl Alias {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn alias(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|it| it.kind() == SyntaxKind::Symbol)
+            .nth(1)
+    }
+}
+
+ast_node!(Export, Export);
+
+impl Export {
+    pub fn export_list(&self) -> Option<ExportList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(ExportList, ExportList);
+
+impl ExportList {
+    pub fn name_tokens(&self) -> impl Iterator<Item = Token> + '_ {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|it| it.kind() == SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(LetExpr, LetExpr);
+
+impl LetExpr {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn in_expr(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
+
+ast_node!(RefBindingExpr, RefBindingExpr);
+
+impl RefBindingExpr {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
+
+ast_node!(MutBindingExpr, MutBindingExpr);
+
+impl MutBindingExpr {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
+
+ast_node!(WithExpr, WithExpr);
+
+impl WithExpr {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn behavior(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Expr {
+    Literal(Literal),
+    Ident(Ident),
+    QualifiedIdent(QualifiedIdent),
+    ParenExpr(ParenExpr),
+    BinaryExpr(BinaryExpr),
+    AssignmentExpr(AssignmentExpr),
+    PrefixExpr(PrefixExpr),
+    FieldAccess(FieldAccess),
+    MethodCall(MethodCall),
+    CallExpr(CallExpr),
+    DoThenExpr(DoThenExpr),
+    NewExpr(NewExpr),
+    CauseExpr(CauseExpr),
+    Array(Array),
+    FnExpr(FnExpr),
+    MatchExpr(MatchExpr),
+    DestructureExpr(DestructureExpr),
+    LetExpr(LetExpr),
+    RefBindingExpr(RefBindingExpr),
+    MutBindingExpr(MutBindingExpr),
+    WithExpr(WithExpr),
+    WithDoExpr(WithDoExpr),
+}
+
+impl AstNode for Expr {
+    fn cast(node: Node) -> Option<Self> {
+        match node.kind() {
+            SyntaxKind::Literal => Literal::cast(node.clone()).map(Expr::Literal),
+            SyntaxKind::Ident => Ident::cast(node.clone()).map(Expr::Ident),
+            SyntaxKind::QualifiedIdent => {
+                QualifiedIdent::cast(node.clone()).map(Expr::QualifiedIdent)
+            }
+            SyntaxKind::ParenExpr => ParenExpr::cast(node.clone()).map(Expr::ParenExpr),
+            SyntaxKind::BinaryExpr => BinaryExpr::cast(node.clone()).map(Expr::BinaryExpr),
+            SyntaxKind::AssignmentExpr => {
+                AssignmentExpr::cast(node.clone()).map(Expr::AssignmentExpr)
+            }
+            SyntaxKind::PrefixExpr => PrefixExpr::cast(node.clone()).map(Expr::PrefixExpr),
+            SyntaxKind::FieldAccess => FieldAccess::cast(node.clone()).map(Expr::FieldAccess),
+            SyntaxKind::MethodCall => MethodCall::cast(node.clone()).map(Expr::MethodCall),
+            SyntaxKind::CallExpr => CallExpr::cast(node.clone()).map(Expr::CallExpr),
+            SyntaxKind::DoThenExpr => DoThenExpr::cast(node.clone()).map(Expr::DoThenExpr),
+            SyntaxKind::NewExpr => NewExpr::cast(node.clone()).map(Expr::NewExpr),
+            SyntaxKind::CauseExpr => CauseExpr::cast(node.clone()).map(Expr::CauseExpr),
+            SyntaxKind::Array => Array::cast(node.clone()).map(Expr::Array),
+            SyntaxKind::FnExpr => FnExpr::cast(node.clone()).map(Expr::FnExpr),
+            SyntaxKind::MatchExpr => MatchExpr::cast(node.clone()).map(Expr::MatchExpr),
+            SyntaxKind::DestructureExpr => {
+                DestructureExpr::cast(node.clone()).map(Expr::DestructureExpr)
+            }
+            SyntaxKind::LetExpr => LetExpr::cast(node.clone()).map(Expr::LetExpr),
+            SyntaxKind::RefBindingExpr => {
+                RefBindingExpr::cast(node.clone()).map(Expr::RefBindingExpr)
+            }
+            SyntaxKind::MutBindingExpr => {
+                MutBindingExpr::cast(node.clone()).map(Expr::MutBindingExpr)
+            }
+            SyntaxKind::WithExpr => WithExpr::cast(node.clone()).map(Expr::WithExpr),
+            SyntaxKind::WithDoExpr => WithDoExpr::cast(node.clone()).map(Expr::WithDoExpr),
+            _ => None,
+        }
+    }
+    fn syntax(&self) -> &Node {
+        match self {
+            Expr::Literal(n) => n.syntax(),
+            Expr::Ident(n) => n.syntax(),
+            Expr::QualifiedIdent(n) => n.syntax(),
+            Expr::ParenExpr(n) => n.syntax(),
+            Expr::BinaryExpr(n) => n.syntax(),
+            Expr::AssignmentExpr(n) => n.syntax(),
+            Expr::PrefixExpr(n) => n.syntax(),
+            Expr::FieldAccess(n) => n.syntax(),
+            Expr::MethodCall(n) => n.syntax(),
+            Expr::CallExpr(n) => n.syntax(),
+            Expr::DoThenExpr(n) => n.syntax(),
+            Expr::NewExpr(n) => n.syntax(),
+            Expr::CauseExpr(n) => n.syntax(),
+            Expr::Array(n) => n.syntax(),
+            Expr::FnExpr(n) => n.syntax(),
+            Expr::MatchExpr(n) => n.syntax(),
+            Expr::DestructureExpr(n) => n.syntax(),
+            Expr::LetExpr(n) => n.syntax(),
+            Expr::RefBindingExpr(n) => n.syntax(),
+            Expr::MutBindingExpr(n) => n.syntax(),
+            Expr::WithExpr(n) => n.syntax(),
+            Expr::WithDoExpr(n) => n.syntax(),
+        }
+    }
+}
+
+ast_node!(Literal, Literal);
+
+impl Literal {
+    pub fn token(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|it| {
+                matches!(
+                    it.kind(),
+                    SyntaxKind::Int
+                        | SyntaxKind::Float
+                        | SyntaxKind::String
+                        | SyntaxKind::KwNull
+                        | SyntaxKind::KwTrue
+                        | SyntaxKind::KwFalse
+                )
+            })
+    }
+}
+
+ast_node!(Ident, Ident);
+
+impl Ident {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(QualifiedIdent, QualifiedIdent);
+
+impl QualifiedIdent {
+    pub fn segments(&self) -> impl Iterator<Item = Token> + '_ {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|it| it.kind() == SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(ParenExpr, ParenExpr);
+
+impl ParenExpr {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(BinaryExpr, BinaryExpr);
+
+impl BinaryExpr {
+    pub fn lhs(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn rhs(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+    pub fn op(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|it| {
+                matches!(
+                    it.kind(),
+                    SyntaxKind::Plus
+                        | SyntaxKind::Minus
+                        | SyntaxKind::Star
+                        | SyntaxKind::Slash
+                        | SyntaxKind::Eq
+                        | SyntaxKind::NotEq
+                        | SyntaxKind::Lt
+                        | SyntaxKind::Gt
+                        | SyntaxKind::LtEq
+                        | SyntaxKind::GtEq
+                        | SyntaxKind::KwOr
+                        | SyntaxKind::KwAnd
+                )
+            })
+    }
+}
+
+ast_node!(AssignmentExpr, AssignmentExpr);
+
+impl AssignmentExpr {
+    pub fn lhs(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn rhs(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
+
+ast_node!(PrefixExpr, PrefixExpr);
+
+impl PrefixExpr {
+    pub fn op(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|it| {
+                matches!(
+                    it.kind(),
+                    SyntaxKind::Minus
+                        | SyntaxKind::KwNot
+                        | SyntaxKind::KwRef
+                        | SyntaxKind::KwMut
+                        | SyntaxKind::KwOwned
+                )
+            })
+    }
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(FieldAccess, FieldAccess);
+
+impl FieldAccess {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn field(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(MethodCall, MethodCall);
+
+impl MethodCall {
+    pub fn receiver(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn method(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn qualified_ident(&self) -> Option<QualifiedIdent> {
+        child_node(&self.0)
+    }
+    pub fn arg_list(&self) -> Option<ArgList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(CallExpr, CallExpr);
+
+impl CallExpr {
+    pub fn callee(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn arg_list(&self) -> Option<ArgList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(ArgList, ArgList);
+
 impl ArgList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::ArgList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn args(&self) -> impl Iterator<Item = Arg> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn args(&self) -> impl Iterator<Item = Arg> {
-    self.0.children().filter_map(Arg::cast)
-  }
 }
 
-make_ast!(CallExpr {
-  callee,
-  lparen,
-  args,
-  rparen
-});
+ast_node!(Arg, Arg);
 
-make_ast!(TypeExpr { inner_type });
+impl Arg {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
 
-make_ast!(RefType {
-  ref_keyword,
-  type_app
-});
+ast_node!(DoThenExpr, DoThenExpr);
 
-make_ast!(TypeApp {
-  base_type,
-  of_keyword,
-  type_args
-});
+impl DoThenExpr {
+    pub fn do_expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn then_expr(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
 
-pub struct TypeArgList(SyntaxNode);
+ast_node!(NewExpr, NewExpr);
+
+impl NewExpr {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn fields(&self) -> impl Iterator<Item = StructField> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(StructField, StructField);
+
+impl StructField {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(CauseExpr, CauseExpr);
+
+impl CauseExpr {
+    pub fn new_expr(&self) -> Option<NewExpr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(Array, Array);
+
+impl Array {
+    pub fn elements(&self) -> impl Iterator<Item = ArrayElement> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(ArrayElement, ArrayElement);
+
+impl ArrayElement {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(FnExpr, FnExpr);
+
+impl FnExpr {
+    pub fn params(&self) -> impl Iterator<Item = Param> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn return_type(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn uses_clause(&self) -> Option<UsesClause> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(Param, Param);
+
+impl Param {
+    pub fn modifier(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|it| {
+                matches!(
+                    it.kind(),
+                    SyntaxKind::KwRef | SyntaxKind::KwMut | SyntaxKind::KwOwned
+                )
+            })
+    }
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(UsesClause, UsesClause);
+
+impl UsesClause {
+    pub fn uses_list(&self) -> Option<UsesList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(UsesList, UsesList);
+
+impl UsesList {
+    pub fn name_tokens(&self) -> impl Iterator<Item = Token> + '_ {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|it| it.kind() == SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(WithDoExpr, WithDoExpr);
+impl WithDoExpr {
+    pub fn effect_list(&self) -> Option<EffectNameList> {
+        child_node(&self.0)
+    }
+    pub fn override_list(&self) -> Option<OverrideList> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(EffectNameList, EffectNameList);
+impl EffectNameList {
+    pub fn effects(&self) -> impl Iterator<Item = Token> + '_ {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .filter(|it| it.kind() == SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(OverrideList, OverrideList);
+impl OverrideList {
+    pub fn entries(&self) -> impl Iterator<Item = OverrideEntry> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(OverrideEntry, OverrideEntry);
+impl OverrideEntry {
+    pub fn handler(&self) -> Option<QualifiedIdent> {
+        child_node(&self.0)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(MatchExpr, MatchExpr);
+
+impl MatchExpr {
+    pub fn scrutinee(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn type_annotation(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn branches(&self) -> impl Iterator<Item = MatchBranch> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn else_clause(&self) -> Option<ElseClause> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(MatchBranch, MatchBranch);
+
+impl MatchBranch {
+    pub fn pattern(&self) -> Option<Pattern> {
+        child_node(&self.0)
+    }
+    pub fn when_clause(&self) -> Option<WhenClause> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        self.0.children().filter_map(Expr::cast).last()
+    }
+}
+
+ast_node!(WhenClause, WhenClause);
+
+impl WhenClause {
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(ElseClause, ElseClause);
+
+impl ElseClause {
+    pub fn body(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Pattern {
+    DestructureStruct(DestructureStruct),
+    Literal(Literal),
+    VariantPattern(VariantPattern),
+    Ident(Ident),
+}
+
+impl AstNode for Pattern {
+    fn cast(node: Node) -> Option<Self> {
+        match node.kind() {
+            SyntaxKind::DestructureStruct => {
+                DestructureStruct::cast(node).map(Pattern::DestructureStruct)
+            }
+            SyntaxKind::Literal => Literal::cast(node).map(Pattern::Literal),
+            SyntaxKind::VariantPattern => VariantPattern::cast(node).map(Pattern::VariantPattern),
+            SyntaxKind::Ident => Ident::cast(node).map(Pattern::Ident),
+            _ => None,
+        }
+    }
+    fn syntax(&self) -> &Node {
+        match self {
+            Pattern::DestructureStruct(n) => n.syntax(),
+            Pattern::Literal(n) => n.syntax(),
+            Pattern::VariantPattern(n) => n.syntax(),
+            Pattern::Ident(n) => n.syntax(),
+        }
+    }
+}
+
+ast_node!(VariantPattern, VariantPattern);
+
+impl VariantPattern {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn binding_list(&self) -> Option<VariantBindingList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(VariantBindingList, VariantBindingList);
+
+impl VariantBindingList {
+    pub fn bindings(&self) -> impl Iterator<Item = VariantBinding> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(VariantBinding, VariantBinding);
+
+impl VariantBinding {
+    pub fn pattern(&self) -> Option<Pattern> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(DestructureExpr, DestructureExpr);
+
+impl DestructureExpr {
+    pub fn destructure_struct(&self) -> Option<DestructureStruct> {
+        child_node(&self.0)
+    }
+    pub fn expr(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+    pub fn else_clause(&self) -> Option<ElseClause> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        nth_child_node(&self.0, 1)
+    }
+}
+
+ast_node!(DestructureStruct, DestructureStruct);
+
+impl DestructureStruct {
+    pub fn fields(&self) -> impl Iterator<Item = DestructureField> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(DestructureField, DestructureField);
+
+impl DestructureField {
+    pub fn modifier(&self) -> Option<Token> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| it.into_token())
+            .find(|it| {
+                matches!(
+                    it.kind(),
+                    SyntaxKind::KwLet | SyntaxKind::KwRef | SyntaxKind::KwMut
+                )
+            })
+    }
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn value(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeExpr {
+    RefType(RefType),
+    FnType(FnType),
+    TypeApp(TypeApp),
+}
+
+impl TypeExpr {
+    pub fn lower(&self, arena: &mut TypeArena, counters: &mut FreshCounters) -> TypeID {
+        match self {
+            TypeExpr::TypeApp(app) => {
+                let name = app.name().unwrap().text().to_string();
+                if let Some(arg_list) = app.arg_list() {
+                    let args = arg_list
+                        .args()
+                        .filter_map(|a| a.type_expr())
+                        .map(|t| t.lower(arena, counters))
+                        .collect();
+                    let head = arena.alloc(Type::TypeCons(TypeCons::new(name)));
+                    arena.alloc(Type::TypeApp(crate::types::TypeApp::new(head, args)))
+                } else {
+                    arena.alloc(Type::TypeCons(TypeCons::new(name)))
+                }
+            }
+            TypeExpr::RefType(r) => {
+                let inner = r
+                    .inner()
+                    .map(|t| TypeExpr::TypeApp(t).lower(arena, counters))
+                    .unwrap_or_else(|| arena.alloc(Type::Error));
+                ref_type(arena, inner)
+            }
+            TypeExpr::FnType(f) => {
+                let params = f
+                    .params()
+                    .filter_map(|p| p.type_expr())
+                    .map(|t| t.lower(arena, counters))
+                    .collect();
+                let ret = f
+                    .return_type()
+                    .map(|t| t.lower(arena, counters))
+                    .unwrap_or_else(|| arena.alloc(Type::Error));
+                fn_type(arena, params, ret)
+            }
+        }
+    }
+}
+
+impl AstNode for TypeExpr {
+    fn cast(node: Node) -> Option<Self> {
+        match node.kind() {
+            SyntaxKind::TypeExpr => {
+                let inner = node.children().next()?;
+                match inner.kind() {
+                    SyntaxKind::RefType => RefType::cast(inner).map(TypeExpr::RefType),
+                    SyntaxKind::FnType => FnType::cast(inner).map(TypeExpr::FnType),
+                    SyntaxKind::TypeApp => TypeApp::cast(inner).map(TypeExpr::TypeApp),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+    fn syntax(&self) -> &Node {
+        match self {
+            TypeExpr::RefType(n) => n.syntax(),
+            TypeExpr::FnType(n) => n.syntax(),
+            TypeExpr::TypeApp(n) => n.syntax(),
+        }
+    }
+}
+
+ast_node!(RefType, RefType);
+
+impl RefType {
+    pub fn inner(&self) -> Option<TypeApp> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(FnType, FnType);
+
+impl FnType {
+    pub fn params(&self) -> impl Iterator<Item = Param> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn return_type(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(TypeApp, TypeApp);
+
+impl TypeApp {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn arg_list(&self) -> Option<TypeArgList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(TypeArgList, TypeArgList);
+
 impl TypeArgList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::TypeArgList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn args(&self) -> impl Iterator<Item = TypeArg> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn children(&self) -> impl Iterator<Item = SyntaxNode> {
-    self.0.children()
-  }
 }
 
-make_ast!(TypeArg { type_expr, comma });
+ast_node!(TypeArg, TypeArg);
 
-make_ast!(TypeDecl {
-  type_keyword,
-  name,
-  type_params,
-  colon_or_equals,
-  body
-});
-
-make_ast!(StructDef {
-  struct_keyword,
-  lbrace,
-  fields,
-  rbrace
-});
-
-make_ast!(StructField {
-  whitespace,
-  name,
-  eq,
-  value
-});
-
-pub struct StructFieldList(SyntaxNode);
-impl StructFieldList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::StructFieldList {
-      Some(Self(node))
-    } else {
-      None
+impl TypeArg {
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
     }
-  }
-  pub fn fields(&self) -> impl Iterator<Item = StructField> + '_ {
-    self.0.children().filter_map(StructField::cast)
-  }
 }
 
-make_ast!(TypeParam { comma, name });
+ast_node!(TypeDecl, TypeDecl);
 
-pub struct TypeParamList(SyntaxNode);
+impl TypeDecl {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_param_list(&self) -> Option<TypeParamList> {
+        child_node(&self.0)
+    }
+    pub fn struct_body(&self) -> Option<StructFieldList> {
+        child_node(&self.0)
+    }
+    pub fn variant_body(&self) -> Option<ConstructorList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(TypeParamList, TypeParamList);
+
 impl TypeParamList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::TypeParamList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn params(&self) -> impl Iterator<Item = TypeParam> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn of_keyword(&self) -> SyntaxNode {
-    self.0.children().nth(0).unwrap()
-  }
-  pub fn params(&self) -> impl Iterator<Item = TypeParam> + '_ {
-    self.0.children().skip(1).filter_map(TypeParam::cast)
-  }
 }
 
-make_ast!(Constructor {
-  or_keyword,
-  type_constructor
-});
+ast_node!(TypeParam, TypeParam);
 
-pub struct ConstructorList(SyntaxNode);
+impl TypeParam {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+}
+
+ast_node!(StructFieldList, StructFieldList);
+
+impl StructFieldList {
+    pub fn fields(&self) -> impl Iterator<Item = StructTypeField> + '_ {
+        child_nodes(&self.0)
+    }
+}
+
+ast_node!(StructTypeField, StructField);
+
+impl StructTypeField {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(Constructor, Constructor);
+
+impl Constructor {
+    pub fn type_constructor(&self) -> Option<TypeConstructor> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(ConstructorList, ConstructorList);
+
 impl ConstructorList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::ConstructorList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn constructors(&self) -> impl Iterator<Item = TypeConstructor> + '_ {
+        child_nodes::<Constructor>(&self.0).filter_map(|c| c.type_constructor())
     }
-  }
-  pub fn constructors(&self) -> impl Iterator<Item = Constructor> + '_ {
-    self.0.children().filter_map(Constructor::cast)
-  }
 }
 
-make_ast!(TypeConstructor {
-  whitespace,
-  name,
-  params,
-  return_types
-});
+ast_node!(TypeConstructor, TypeConstructor);
 
-make_ast!(ConstructorParam { comma, type_name });
+impl TypeConstructor {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn param_list(&self) -> Option<ConstructorParamList> {
+        child_node(&self.0)
+    }
+}
 
-pub struct ConstructorParamList(SyntaxNode);
+ast_node!(ConstructorParamList, ConstructorParamList);
+
 impl ConstructorParamList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::ConstructorParamList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn params(&self) -> impl Iterator<Item = ConstructorParam> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn of_or_arrow(&self) -> SyntaxNode {
-    self.0.children().nth(0).unwrap()
-  }
-  pub fn params(&self) -> impl Iterator<Item = ConstructorParam> + '_ {
-    self.0.children().skip(1).filter_map(ConstructorParam::cast)
-  }
 }
 
-make_ast!(BehaviorDef {
-  concept_keyword,
-  name,
-  requires_keyword,
-  lbrace1,
-  requirements,
-  rbrace1,
-  with_keyword,
-  lbrace2,
-  methods,
-  rbrace2
-});
+ast_node!(ConstructorParam, ConstructorParam);
 
-pub struct RequirementList(SyntaxNode);
-impl RequirementList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::RequirementList {
-      Some(Self(node))
-    } else {
-      None
+impl ConstructorParam {
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
     }
-  }
-  pub fn fields(&self) -> impl Iterator<Item = RequirementField> + '_ {
-    self.0.children().filter_map(RequirementField::cast)
-  }
 }
 
-make_ast!(RequirementField {
-  comma,
-  whitespace,
-  name,
-  eq,
-  type_expr
-});
+ast_node!(EffectDef, EffectDef);
 
-pub struct MethodList(SyntaxNode);
+impl EffectDef {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
+    }
+    pub fn method_list(&self) -> Option<MethodList> {
+        child_node(&self.0)
+    }
+}
+
+ast_node!(MethodList, MethodList);
+
 impl MethodList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::MethodList {
-      Some(Self(node))
-    } else {
-      None
+    pub fn methods(&self) -> impl Iterator<Item = MethodDef> + '_ {
+        child_nodes(&self.0)
     }
-  }
-  pub fn methods(&self) -> impl Iterator<Item = MethodDef> + '_ {
-    self.0.children().filter_map(MethodDef::cast)
-  }
 }
 
-make_ast!(MethodDef {
-  def_keyword,
-  name,
-  lparen,
-  param_list,
-  rparen,
-  arrow,
-  return_type,
-  colon,
-  body
-});
+ast_node!(MethodDef, MethodDef);
 
-make_ast!(ParenExpr {
-  lparen,
-  inner,
-  rparen
-});
-
-make_ast!(WithClause {
-  with_keyword,
-  behavior
-});
-
-make_ast!(WithExpr { lhs, with_clause });
-
-make_ast!(PrefixExpr { operator, rhs });
-
-make_ast!(BinaryExpr { lhs, operator, rhs });
-
-make_ast!(NewExpr {
-  new_keyword,
-  struct_name,
-  lparen,
-  fields,
-  rparen
-});
-
-make_ast!(InExpr { in_keyword, expr });
-
-make_ast!(ElseClause {
-  else_keyword,
-  colon,
-  expr
-});
-
-pub struct ParamList(SyntaxNode);
-impl ParamList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::ParamList {
-      Some(Self(node))
-    } else {
-      None
+impl MethodDef {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
     }
-  }
-  pub fn params(&self) -> impl Iterator<Item = Param> + '_ {
-    self.0.children().filter_map(Param::cast)
-  }
+    pub fn params(&self) -> impl Iterator<Item = Param> + '_ {
+        child_nodes(&self.0)
+    }
+    pub fn return_type(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
+    }
+    pub fn uses_clause(&self) -> Option<UsesClause> {
+        child_node(&self.0)
+    }
+    pub fn body(&self) -> Option<Expr> {
+        child_node(&self.0)
+    }
 }
 
-make_ast!(DestructureField {
-  binding_keyword,
-  name,
-  left_arrow,
-  field_expr
-});
+ast_node!(BehaviorDef, BehaviorDef);
 
-pub struct DestructureFieldList(SyntaxNode);
-impl DestructureFieldList {
-  pub fn cast(node: SyntaxNode) -> Option<Self> {
-    if node.kind() == SyntaxKind::DestructureFieldList {
-      Some(Self(node))
-    } else {
-      None
+impl BehaviorDef {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
     }
-  }
-  pub fn fields(&self) -> impl Iterator<Item = DestructureField> + '_ {
-    self.0.children().filter_map(DestructureField::cast)
-  }
+    pub fn requirement_list(&self) -> Option<RequirementList> {
+        child_node(&self.0)
+    }
+    pub fn method_list(&self) -> Option<MethodList> {
+        child_node(&self.0)
+    }
 }
 
-make_ast!(DestructureStruct {
-  lbrace,
-  fields,
-  rbrace
-});
+ast_node!(RequirementList, RequirementList);
 
-make_ast!(CauseExpr {
-  cause_keyword,
-  exception_expr
-});
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AstNode {
-  Literal(Literal),
-  Ident(Ident),
-  LetExpr(LetExpr),
-  RefBindingExpr(RefBindingExpr),
-  DestructureExpr(DestructureExpr),
-  FieldAccess(FieldAccess),
-  MethodCall(MethodCall),
-  FnExpr(FnExpr),
-  MatchExpr(MatchExpr),
-  CallExpr(CallExpr),
-  ParenExpr(ParenExpr),
-  WithExpr(WithExpr),
-  PrefixExpr(PrefixExpr),
-  BinaryExpr(BinaryExpr),
-  NewExpr(NewExpr),
-
-  TypeExpr(TypeExpr),
-  TypeApp(TypeApp),
-  RefType(RefType),
-  TypeDecl(TypeDecl),
-
-  StructDef(StructDef),
-  StructField(StructField),
-
-  BehaviorDef(BehaviorDef),
-  MethodDef(MethodDef),
-
-  MatchBranch(MatchBranch),
-  WhenClause(WhenClause),
-
-  Param(Param),
-  Arg(Arg),
-  TypeArg(TypeArg),
-  TypeParam(TypeParam),
-  Constructor(Constructor),
-  TypeConstructor(TypeConstructor),
-  ConstructorParam(ConstructorParam),
-  RequirementField(RequirementField),
-  InExpr(InExpr),
-  ElseClause(ElseClause),
-  WithClause(WithClause),
-  DestructureField(DestructureField),
-  DestructureStruct(DestructureStruct),
-  CauseExpr(CauseExpr),
+impl RequirementList {
+    pub fn fields(&self) -> impl Iterator<Item = RequirementField> + '_ {
+        child_nodes(&self.0)
+    }
 }
 
-impl AstNode {
-  pub fn cast(syntax: SyntaxNode) -> Option<Self> {
-    match syntax.kind() {
-      SyntaxKind::Literal => Some(AstNode::Literal(Literal::cast(syntax)?)),
-      SyntaxKind::Ident => Some(AstNode::Ident(Ident::cast(syntax)?)),
-      SyntaxKind::LetExpr => Some(AstNode::LetExpr(LetExpr::cast(syntax)?)),
-      SyntaxKind::RefBindingExpr => Some(AstNode::RefBindingExpr(RefBindingExpr::cast(syntax)?)),
-      SyntaxKind::DestructureExpr => Some(AstNode::DestructureExpr(DestructureExpr::cast(syntax)?)),
-      SyntaxKind::FieldAccess => Some(AstNode::FieldAccess(FieldAccess::cast(syntax)?)),
-      SyntaxKind::MethodCall => Some(AstNode::MethodCall(MethodCall::cast(syntax)?)),
-      SyntaxKind::FnExpr => Some(AstNode::FnExpr(FnExpr::cast(syntax)?)),
-      SyntaxKind::MatchExpr => Some(AstNode::MatchExpr(MatchExpr::cast(syntax)?)),
-      SyntaxKind::CallExpr => Some(AstNode::CallExpr(CallExpr::cast(syntax)?)),
-      SyntaxKind::ParenExpr => Some(AstNode::ParenExpr(ParenExpr::cast(syntax)?)),
-      SyntaxKind::WithExpr => Some(AstNode::WithExpr(WithExpr::cast(syntax)?)),
-      SyntaxKind::PrefixExpr => Some(AstNode::PrefixExpr(PrefixExpr::cast(syntax)?)),
-      SyntaxKind::BinaryExpr => Some(AstNode::BinaryExpr(BinaryExpr::cast(syntax)?)),
-      SyntaxKind::NewExpr => Some(AstNode::NewExpr(NewExpr::cast(syntax)?)),
-      SyntaxKind::TypeExpr => Some(AstNode::TypeExpr(TypeExpr::cast(syntax)?)),
-      SyntaxKind::TypeApp => Some(AstNode::TypeApp(TypeApp::cast(syntax)?)),
-      SyntaxKind::RefType => Some(AstNode::RefType(RefType::cast(syntax)?)),
-      SyntaxKind::TypeDecl => Some(AstNode::TypeDecl(TypeDecl::cast(syntax)?)),
-      SyntaxKind::StructDef => Some(AstNode::StructDef(StructDef::cast(syntax)?)),
-      SyntaxKind::StructField => Some(AstNode::StructField(StructField::cast(syntax)?)),
-      SyntaxKind::BehaviorDef => Some(AstNode::BehaviorDef(BehaviorDef::cast(syntax)?)),
-      SyntaxKind::MethodDef => Some(AstNode::MethodDef(MethodDef::cast(syntax)?)),
-      SyntaxKind::MatchBranch => Some(AstNode::MatchBranch(MatchBranch::cast(syntax)?)),
-      SyntaxKind::WhenClause => Some(AstNode::WhenClause(WhenClause::cast(syntax)?)),
-      SyntaxKind::Param => Some(AstNode::Param(Param::cast(syntax)?)),
-      SyntaxKind::Arg => Some(AstNode::Arg(Arg::cast(syntax)?)),
-      SyntaxKind::TypeArg => Some(AstNode::TypeArg(TypeArg::cast(syntax)?)),
-      SyntaxKind::TypeParam => Some(AstNode::TypeParam(TypeParam::cast(syntax)?)),
-      SyntaxKind::Constructor => Some(AstNode::Constructor(Constructor::cast(syntax)?)),
-      SyntaxKind::TypeConstructor => Some(AstNode::TypeConstructor(TypeConstructor::cast(syntax)?)),
-      SyntaxKind::ConstructorParam => {
-        Some(AstNode::ConstructorParam(ConstructorParam::cast(syntax)?))
-      }
-      SyntaxKind::RequirementField => {
-        Some(AstNode::RequirementField(RequirementField::cast(syntax)?))
-      }
-      SyntaxKind::InExpr => Some(AstNode::InExpr(InExpr::cast(syntax)?)),
-      SyntaxKind::ElseClause => Some(AstNode::ElseClause(ElseClause::cast(syntax)?)),
-      SyntaxKind::WithClause => Some(AstNode::WithClause(WithClause::cast(syntax)?)),
-      SyntaxKind::DestructureField => {
-        Some(AstNode::DestructureField(DestructureField::cast(syntax)?))
-      }
-      SyntaxKind::DestructureStruct => {
-        Some(AstNode::DestructureStruct(DestructureStruct::cast(syntax)?))
-      }
-      SyntaxKind::CauseExpr => Some(AstNode::CauseExpr(CauseExpr::cast(syntax)?)),
-      _ => None,
+ast_node!(RequirementField, RequirementField);
+
+impl RequirementField {
+    pub fn name(&self) -> Option<Token> {
+        child_token(&self.0, SyntaxKind::Symbol)
     }
-  }
-
-  pub fn syntax(&self) -> &SyntaxNode {
-    match self {
-      AstNode::Literal(n) => n.syntax(),
-      AstNode::Ident(n) => n.syntax(),
-      AstNode::LetExpr(n) => n.syntax(),
-      AstNode::RefBindingExpr(n) => n.syntax(),
-      AstNode::DestructureExpr(n) => n.syntax(),
-      AstNode::FieldAccess(n) => n.syntax(),
-      AstNode::MethodCall(n) => n.syntax(),
-      AstNode::FnExpr(n) => n.syntax(),
-      AstNode::MatchExpr(n) => n.syntax(),
-      AstNode::CallExpr(n) => n.syntax(),
-      AstNode::ParenExpr(n) => n.syntax(),
-      AstNode::WithExpr(n) => n.syntax(),
-      AstNode::PrefixExpr(n) => n.syntax(),
-      AstNode::BinaryExpr(n) => n.syntax(),
-      AstNode::NewExpr(n) => n.syntax(),
-      AstNode::TypeExpr(n) => n.syntax(),
-      AstNode::TypeApp(n) => n.syntax(),
-      AstNode::RefType(n) => n.syntax(),
-      AstNode::TypeDecl(n) => n.syntax(),
-      AstNode::StructDef(n) => n.syntax(),
-      AstNode::StructField(n) => n.syntax(),
-      AstNode::BehaviorDef(n) => n.syntax(),
-      AstNode::MethodDef(n) => n.syntax(),
-      AstNode::MatchBranch(n) => n.syntax(),
-      AstNode::WhenClause(n) => n.syntax(),
-      AstNode::Param(n) => n.syntax(),
-      AstNode::Arg(n) => n.syntax(),
-      AstNode::TypeArg(n) => n.syntax(),
-      AstNode::TypeParam(n) => n.syntax(),
-      AstNode::Constructor(n) => n.syntax(),
-      AstNode::TypeConstructor(n) => n.syntax(),
-      AstNode::ConstructorParam(n) => n.syntax(),
-      AstNode::RequirementField(n) => n.syntax(),
-      AstNode::InExpr(n) => n.syntax(),
-      AstNode::ElseClause(n) => n.syntax(),
-      AstNode::WithClause(n) => n.syntax(),
-      AstNode::DestructureField(n) => n.syntax(),
-      AstNode::DestructureStruct(n) => n.syntax(),
-      AstNode::CauseExpr(n) => n.syntax(),
+    pub fn type_expr(&self) -> Option<TypeExpr> {
+        child_node(&self.0)
     }
-  }
-
-  pub fn is_expr(&self) -> bool {
-    matches!(
-      self,
-      AstNode::LetExpr(_)
-        | AstNode::RefBindingExpr(_)
-        | AstNode::DestructureExpr(_)
-        | AstNode::FieldAccess(_)
-        | AstNode::MethodCall(_)
-        | AstNode::FnExpr(_)
-        | AstNode::MatchExpr(_)
-        | AstNode::CallExpr(_)
-        | AstNode::ParenExpr(_)
-        | AstNode::WithExpr(_)
-        | AstNode::PrefixExpr(_)
-        | AstNode::BinaryExpr(_)
-        | AstNode::NewExpr(_)
-        | AstNode::Literal(_)
-        | AstNode::Ident(_)
-        | AstNode::CauseExpr(_)
-    )
-  }
-
-  pub fn is_type(&self) -> bool {
-    matches!(
-      self,
-      AstNode::TypeExpr(_) | AstNode::TypeApp(_) | AstNode::RefType(_)
-    )
-  }
 }

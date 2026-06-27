@@ -50,21 +50,34 @@ impl RewriteEngine {
     loop {
       let before = epath.equalities.len();
       let path_count = epath.paths.len();
+
       for path_idx in 0..path_count {
-        for block_idx in 0..epath.paths[path_idx].blocks.len() {
-          let blocks = epath.paths[path_idx].blocks[block_idx..].to_vec();
+        let path_len = epath.paths[path_idx].blocks.len();
+
+        for block_idx in 0..path_len {
           let slice = PathSlice {
             path: PathId(path_idx),
             start: block_idx,
-            end: epath.paths[path_idx].blocks.len(),
+            end: path_len,
           };
-          if !epath.equalities.contains_key(&slice) {
-            for rule in &self.rules {
-              rule(&blocks, slice.clone(), epath);
-            }
+
+          if epath.equalities.contains_key(&slice) {
+            continue;
           }
+
+          let blocks = epath.paths[path_idx].blocks[block_idx..].to_vec();
+
+          for rule in &self.rules {
+            rule(&blocks, slice.clone(), epath);
+          }
+
+          epath
+            .equalities
+            .entry(slice)
+            .or_insert_with(std::collections::HashSet::new);
         }
       }
+
       if epath.equalities.len() == before {
         break;
       }
