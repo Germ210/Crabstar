@@ -2,5 +2,5 @@
 resolver = "3"
 members = [
   "crabstarc",
-  "crabstar-frontend", "crabstar-backend", "ematch_macro",
+  "crabstar-frontend", "crabstar-backend", "ematch_macro", "cstar-lsp",
 ]
